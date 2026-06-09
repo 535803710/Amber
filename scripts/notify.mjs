@@ -5,15 +5,16 @@ import { existsSync, readFileSync } from "node:fs";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { resolve } from "node:path";
+import { formatFeishuText } from "./notify-format.mjs";
 
 const STATUS_LABELS = {
   test: "测试",
   info: "提示",
-  running: "开始",
+  running: "进行中",
   done: "完成",
   error: "异常",
-  wait: "需要接管",
-  ask: "需要接管"
+  wait: "需要操作",
+  ask: "需要操作"
 };
 
 main().catch((error) => {
@@ -33,10 +34,11 @@ async function main() {
   }
 
   const dryRun = consumeFlag(args, "--dry-run");
+  const editor = readOption(args, "--editor");
+  const task = readOption(args, "--task");
   const status = normalizeStatus(args.shift() || "info");
   const message = args.join(" ").trim();
-  const title = process.env.VIBECODING_NOTIFY_TITLE || "Vibecoding";
-  const text = formatMessage({ title, status, message });
+  const text = formatMessage({ source: editor, task, status, message });
   const payload = buildFeishuPayload(text);
 
   if (dryRun) {
@@ -60,10 +62,23 @@ function normalizeStatus(value) {
   return STATUS_LABELS[status] ? status : "info";
 }
 
-function formatMessage({ title, status, message }) {
-  const label = STATUS_LABELS[status];
-  const secondLine = message ? `${label}：${message}` : label;
-  return `${title}\n${secondLine}`;
+function formatMessage({ source, task, status, message }) {
+  return formatFeishuText({ source, task, status, message });
+}
+
+function readOption(args, flag) {
+  const index = args.indexOf(flag);
+  if (index === -1) {
+    return null;
+  }
+
+  const value = args[index + 1];
+  if (!value || value.startsWith("--")) {
+    throw new Error(`${flag} requires a value`);
+  }
+
+  args.splice(index, 2);
+  return value;
 }
 
 function buildFeishuPayload(text) {
@@ -214,10 +229,13 @@ Examples:
   node scripts/notify.mjs wait "需要你接管确认"
 
 Options:
-  --dry-run  Print the Feishu payload without sending it
+  --dry-run           Print the Feishu payload without sending it
+  --editor <name>     Codex or Cursor
+  --task <name>       Task name shown on the third line
 
 Environment:
   FEISHU_WEBHOOK_URL      Required unless --dry-run is used
   FEISHU_WEBHOOK_SECRET   Optional, for Feishu signature verification
+  MI_NOTIC_EDITOR         Optional default editor when auto-detection fails
 `);
 }

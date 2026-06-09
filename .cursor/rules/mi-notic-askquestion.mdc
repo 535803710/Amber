@@ -1,0 +1,35 @@
+---
+description: AskQuestion 前先 notify-ask；失焦时 toast 由去重兜底
+alwaysApply: true
+---
+
+# AskQuestion 通知规则
+
+## 核心策略
+
+| Cursor 状态 | 主路径 | 备用 |
+|-------------|--------|------|
+| **聚焦** | AskQuestion 前先 `notify-ask.mjs` | Hook 不可靠（AskQuestion 不触发 Hook） |
+| **失焦** | `watch:all` `[toast]` | 若 Agent 已发过 notify-ask，toast 会被去重跳过 |
+
+`status.mjs` 对 `wait` 消息做了**归一化去重**，同一问题不会因 notify-ask + toast 发两条。
+
+## AskQuestion 前必须执行（Shell，第一步）
+
+```powershell
+node "D:/project/mi-notic/scripts/notify-ask.mjs" "<一句话问题摘要>"
+```
+
+然后再调用 AskQuestion。用户回答前不要执行其他工具。
+
+## 示例
+
+```powershell
+node "D:/project/mi-notic/scripts/notify-ask.mjs" "你想怎么测通知"
+```
+
+## 注意
+
+- 不可跳过 notify-ask，即使用户只说「问我一个问题」
+- 失焦时 toast 可能随后到达，属正常；去重后飞书仍应只有 1 条
+- `watch:all` 请保持运行

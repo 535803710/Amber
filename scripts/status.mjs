@@ -12,8 +12,8 @@ const STATUS_LABELS = {
   running: "开始",
   done: "完成",
   error: "异常",
-  wait: "需要接管",
-  ask: "需要接管"
+  wait: "需要操作",
+  ask: "需要操作"
 };
 
 const DEFAULT_NOTIFY_STATUSES = new Set(["test", "done", "error", "wait", "ask"]);
@@ -43,6 +43,8 @@ async function main() {
   const force = consumeFlag(args, "--force");
   const notify = consumeFlag(args, "--notify");
   const noNotify = consumeFlag(args, "--no-notify");
+  const editor = readOption(args, "--editor");
+  const task = readOption(args, "--task");
 
   if (notify && noNotify) {
     throw new Error("Use either --notify or --no-notify, not both.");
@@ -66,6 +68,8 @@ async function main() {
     status,
     label: STATUS_LABELS[status],
     message,
+    editor: editor || null,
+    task: task || null,
     updatedAt: now.toISOString(),
     notify: {
       shouldSend: decision.shouldSend,
@@ -86,8 +90,8 @@ async function main() {
     return;
   }
 
-  await runNotify(status, message);
   writeJson(CACHE_FILE, updateCache(decision.fingerprint, status, message, now));
+  await runNotify(status, message, editor, task);
   console.log(`Status recorded and notification sent: ${status}.`);
 }
 
@@ -107,7 +111,8 @@ function decideNotification({ status, message, force, notify, noNotify, dedupeSe
     return { shouldSend: false, reason: "status_not_notifiable", fingerprint };
   }
 
-  if (!force && isDuplicate(fingerprint, dedupeSeconds, now)) {
+  const enforceDedupe = status === "wait" || status === "ask";
+  if ((!force || enforceDedupe) && isDuplicate(fingerprint, dedupeSeconds, now)) {
     return { shouldSend: false, reason: "duplicate", fingerprint };
   }
 
@@ -119,7 +124,28 @@ function decideNotification({ status, message, force, notify, noNotify, dedupeSe
 }
 
 function createFingerprint(status, message) {
-  return createHash("sha256").update(`${status}\0${message}`).digest("hex");
+  const normalizedMessage = normalizeMessageForDedupe(status, message);
+  return createHash("sha256").update(`${status}\0${normalizedMessage}`).digest("hex");
+}
+
+function normalizeMessageForDedupe(status, message) {
+  const text = String(message || "").trim();
+  if (status !== "wait" && status !== "ask") {
+    return text;
+  }
+
+  let normalized = text.toLowerCase();
+
+  normalized = normalized.replace(/^(cursor|codex)[：:\s]+/i, "");
+  normalized = normalized.replace(/^cursor 等你回答[：:\s]+/i, "");
+  normalized = normalized.replace(/^codex\/cursor 需要你确认[：:\s]+/i, "");
+
+  normalized = normalized.replace(/input needed\s*[·•?\u00b7\-–—]*\s*/gi, "");
+  normalized = normalized.replace(/command approval\s*[·•?\u00b7\-–—]*\s*/gi, "");
+  normalized = normalized.replace(/open cursor to answer the agent'?s questions?\.?\s*/gi, "");
+  normalized = normalized.replace(/open cursor to view the agent'?s output\.?\s*/gi, "");
+
+  return normalized.replace(/\s+/g, " ").trim();
 }
 
 function isDuplicate(fingerprint, dedupeSeconds, now) {
@@ -161,9 +187,17 @@ function readDedupeSeconds() {
   return Math.floor(value);
 }
 
-function runNotify(status, message) {
+function runNotify(status, message, editor, task) {
   return new Promise((resolveRun, rejectRun) => {
-    const child = spawn(process.execPath, [NOTIFY_SCRIPT, status, message], {
+    const notifyArgs = [NOTIFY_SCRIPT, status, message];
+    if (editor) {
+      notifyArgs.push("--editor", editor);
+    }
+    if (task) {
+      notifyArgs.push("--task", task);
+    }
+
+    const child = spawn(process.execPath, notifyArgs, {
       stdio: "inherit",
       shell: false
     });
@@ -244,6 +278,21 @@ function consumeFlag(args, flag) {
   return true;
 }
 
+function readOption(args, flag) {
+  const index = args.indexOf(flag);
+  if (index === -1) {
+    return null;
+  }
+
+  const value = args[index + 1];
+  if (!value || value.startsWith("--")) {
+    throw new Error(`${flag} requires a value`);
+  }
+
+  args.splice(index, 2);
+  return value;
+}
+
 function printHelp() {
   console.log(`Usage:
   node scripts/status.mjs <status> <message>
@@ -259,6 +308,8 @@ Options:
   --force      Send even when duplicate or normally non-notifying
   --notify     Send for this status even if it is normally record-only
   --no-notify  Record only, never send
+  --editor     Codex or Cursor (shown on Feishu/band)
+  --task       Task name (third line on Feishu/band)
 
 Files:
   .local/status.json        Latest status
