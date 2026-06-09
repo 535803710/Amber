@@ -13,6 +13,8 @@ Feishu custom bot guide: https://open.feishu.cn/document/client-docs/bot-v3/add-
 
 ## Usage
 
+Send a direct Feishu notification:
+
 ```powershell
 npm run notify -- test "手环通知链路测试"
 npm run notify -- done "Codex 任务完成"
@@ -32,6 +34,36 @@ Dry run without sending:
 node scripts/notify.mjs done "Codex 任务完成" --dry-run
 ```
 
+If signature verification is enabled, dry-run output redacts the generated sign.
+
+Record a vibecoding status and notify only when needed:
+
+```powershell
+npm run status -- running "Codex 正在执行"
+npm run status -- done "Codex 任务完成"
+npm run status -- error "Cursor 构建失败"
+npm run status -- wait "需要你接管确认"
+```
+
+`status` writes the latest status to `.local/status.json`.
+
+By default, only these statuses send Feishu notifications:
+
+```text
+test, done, error, wait, ask
+```
+
+`running` and `info` are recorded but do not notify. The same status and message will not notify repeatedly within 5 minutes.
+
+Useful status options:
+
+```powershell
+node scripts/status.mjs done "Codex 任务完成" --dry-run
+node scripts/status.mjs done "Codex 任务完成" --force
+node scripts/status.mjs running "Codex 正在执行" --notify
+node scripts/status.mjs done "Codex 任务完成" --no-notify
+```
+
 ## Message Format
 
 The message is intentionally short for band display:
@@ -45,4 +77,10 @@ Supported status types:
 
 ```text
 test, info, running, done, error, wait, ask
+```
+
+Optional status environment:
+
+```text
+VIBECODING_NOTIFY_DEDUPE_SECONDS=300
 ```

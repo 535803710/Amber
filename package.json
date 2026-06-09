@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "notify": "node scripts/notify.mjs"
+    "notify": "node scripts/notify.mjs",
+    "status": "node scripts/status.mjs"
   }
 }

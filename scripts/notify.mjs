@@ -40,7 +40,7 @@ async function main() {
   const payload = buildFeishuPayload(text);
 
   if (dryRun) {
-    console.log(JSON.stringify(payload, null, 2));
+    console.log(JSON.stringify(redactDryRunPayload(payload), null, 2));
     return;
   }
 
@@ -80,6 +80,10 @@ function buildFeishuPayload(text) {
   }
 
   return payload;
+}
+
+function redactDryRunPayload(payload) {
+  return payload.sign ? { ...payload, sign: "[redacted]" } : payload;
 }
 
 function createFeishuSign(timestamp, secret) {
