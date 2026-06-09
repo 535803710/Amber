@@ -1,2 +1,6 @@
 
 *.copilot
+.env
+.env.local
+.local/
+node_modules/
