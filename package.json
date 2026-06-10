@@ -19,6 +19,7 @@
     "autostart:uninstall": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-autostart.ps1 -Uninstall",
     "autostart:status": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-autostart.ps1 -Status",
     "autostart:start": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-watch-background.ps1",
-    "autostart:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stop-watch-background.ps1"
+    "autostart:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stop-watch-background.ps1",
+    "dashboard": "node scripts/dashboard-server.mjs"
   }
 }

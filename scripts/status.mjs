@@ -90,8 +90,8 @@ async function main() {
     return;
   }
 
-  writeJson(CACHE_FILE, updateCache(decision.fingerprint, status, message, now));
   await runNotify(status, message, editor, task);
+  writeJson(CACHE_FILE, updateCache(decision.fingerprint, status, message, now));
   console.log(`Status recorded and notification sent: ${status}.`);
 }
 

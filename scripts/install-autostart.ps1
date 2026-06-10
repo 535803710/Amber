@@ -39,8 +39,14 @@ function Show-Status {
 
 function Remove-StartupShortcut {
     if (Test-Path $ShortcutPath) {
-        Remove-Item -Path $ShortcutPath -Force
-        Write-Host "Removed startup shortcut"
+        try {
+            $shortcutItem = Get-Item -LiteralPath $ShortcutPath -ErrorAction Stop
+            $shortcutItem.Attributes = [System.IO.FileAttributes]::Normal
+            Remove-Item -LiteralPath $ShortcutPath -Force -ErrorAction Stop
+            Write-Host "Removed startup shortcut"
+        } catch {
+            throw "Failed to remove startup shortcut: $ShortcutPath. $($_.Exception.Message)"
+        }
     }
 }
 

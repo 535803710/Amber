@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>mi-notic 控制台</title>
+  <script>
+    (() => {
+      const saved = localStorage.getItem("mi-notic-theme");
+      if (saved === "light" || saved === "dark") {
+        document.documentElement.dataset.theme = saved;
+      }
+    })();
+  </script>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <div class="page">
+    <header class="header">
+      <div class="header-copy">
+        <p class="prompt-line"><span>mi-notic@local</span>:<span>~/control</span>$ status</p>
+        <h1>notifyctl</h1>
+        <p class="subtitle">toast -> feishu</p>
+      </div>
+      <div class="header-actions">
+        <button id="themeToggle" class="btn btn-ghost" type="button" aria-label="切换明暗模式">theme</button>
+        <button id="langToggle" class="btn btn-ghost" type="button" aria-label="切换语言">lang</button>
+        <button id="refreshBtn" class="btn btn-ghost" type="button" aria-label="刷新状态">refresh</button>
+      </div>
+    </header>
+
+    <main class="grid">
+      <section class="card card-accent">
+        <div class="card-head">
+          <h2 id="watcherTitle"><span>$</span> watcher</h2>
+          <span id="watcherBadge" class="badge" aria-live="polite">loading</span>
+        </div>
+        <dl class="meta">
+          <div><dt id="pidLabel">pid</dt><dd id="watcherPid">-</dd></div>
+          <div><dt id="accessLabel">access</dt><dd id="accessStatus">-</dd></div>
+          <div><dt id="webhookStateLabel">webhook</dt><dd id="feishuStatus">-</dd></div>
+        </dl>
+        <div class="actions">
+          <button id="startBtn" class="btn btn-primary" type="button">watcher start</button>
+          <button id="stopBtn" class="btn btn-danger" type="button">watcher stop</button>
+        </div>
+        <p id="accessHint" class="hint"></p>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2 id="lastTitle"><span>$</span> last</h2>
+        </div>
+        <div id="lastStatus" class="last-status empty" aria-live="polite">no record</div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2 id="rulesTitle"><span>$</span> rules</h2>
+          <span id="rulesHint" class="hint-inline">toast filter</span>
+        </div>
+        <div class="toggle-list">
+          <label class="toggle">
+            <input id="notifyOnWait" type="checkbox">
+            <span>
+              <strong id="waitRuleTitle">wait / ask</strong>
+              <small id="waitRuleDesc">需要操作</small>
+            </span>
+          </label>
+          <label class="toggle">
+            <input id="notifyOnDone" type="checkbox">
+            <span>
+              <strong id="doneRuleTitle">done</strong>
+              <small id="doneRuleDesc">任务完成</small>
+            </span>
+          </label>
+          <label class="toggle">
+            <input id="notifyOnInfo" type="checkbox">
+            <span>
+              <strong id="infoRuleTitle">info</strong>
+              <small id="infoRuleDesc">其他提示</small>
+            </span>
+          </label>
+        </div>
+        <div class="actions">
+          <button id="saveSettingsBtn" class="btn btn-primary" type="button">rules save</button>
+        </div>
+        <p id="settingsMsg" class="hint" role="status" aria-live="polite"></p>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2 id="configTitle"><span>$</span> config</h2>
+          <span id="autostartBadge" class="badge">loading</span>
+        </div>
+        <div class="form-grid">
+          <label class="field">
+            <span>FEISHU_WEBHOOK_URL</span>
+            <input id="webhookUrl" type="url" inputmode="url" autocomplete="off" placeholder="https://open.feishu.cn/...">
+            <small id="webhookMeta">-</small>
+          </label>
+          <label class="field">
+            <span>FEISHU_WEBHOOK_SECRET</span>
+            <input id="webhookSecret" type="password" autocomplete="off" placeholder="optional">
+            <small id="webhookSecretMeta">-</small>
+          </label>
+          <div class="inline-checks">
+            <label><input id="clearWebhook" type="checkbox"> <span id="clearWebhookLabel">clear webhook</span></label>
+            <label><input id="clearSecret" type="checkbox"> <span id="clearSecretLabel">clear secret</span></label>
+          </div>
+        </div>
+        <div class="actions">
+          <button id="saveFeishuBtn" class="btn btn-primary" type="button">config save</button>
+          <button id="testNotifyBtn" class="btn btn-ghost" type="button">notify test</button>
+        </div>
+        <div class="split-row">
+          <div>
+            <div id="autostartLabel" class="status-label">autostart</div>
+            <div id="autostartStatus" class="status-copy">-</div>
+          </div>
+          <button id="toggleAutostartBtn" class="btn btn-ghost" type="button">autostart toggle</button>
+        </div>
+        <p id="connectionMsg" class="hint" role="status" aria-live="polite"></p>
+      </section>
+
+      <section class="card card-wide">
+        <div class="card-head">
+          <h2 id="logTitle"><span>$</span> tail .local/watch-toast.log</h2>
+        </div>
+        <pre id="logTail" class="log">loading...</pre>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast" hidden role="status" aria-live="polite"></div>
+  <script src="/app.js"></script>
+</body>
+</html>

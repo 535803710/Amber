@@ -3,8 +3,9 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawn } from "node:child_process";
+import { runHiddenCommand, spawnHidden } from "./lib/spawn-hidden.mjs";
 import { isPendingAskNotifyActive } from "./ask-notify-window.mjs";
+import { shouldNotifyForStatus } from "./lib/settings.mjs";
 import {
   compactToastSummary,
   getNotifyCategoryLabel,
@@ -107,6 +108,16 @@ async function main() {
 
         const message = formatMessage(item);
         const status = classifyNotification(item);
+
+        if (!shouldNotifyForStatus(status, process.cwd())) {
+          if (dryRun) {
+            console.log(`[dry-run] 跳过 toast（设置已关闭 ${status}）：${message}`);
+          } else {
+            console.log(`跳过 toast（设置已关闭 ${status}）：${message}`);
+          }
+          markWatched(watched, item);
+          continue;
+        }
 
         if (status === "wait" && isPendingAskNotifyActive(process.cwd())) {
           if (dryRun) {
@@ -248,7 +259,7 @@ async function runListener({ action, requestAccess = false }) {
     psArgs.push("-RequestAccess");
   }
 
-  const stdout = await runCommand("powershell.exe", psArgs);
+  const stdout = await runHiddenCommand("powershell.exe", psArgs);
   return JSON.parse(stdout);
 }
 
@@ -259,7 +270,7 @@ function runStatus(message, status = "info", editor) {
   }
 
   return new Promise((resolveRun, rejectRun) => {
-    const child = spawn(process.execPath, args, { stdio: "pipe", shell: false });
+    const child = spawnHidden(process.execPath, args, { stdio: "pipe" });
     let output = "";
 
     child.stdout.on("data", (chunk) => {
@@ -274,35 +285,6 @@ function runStatus(message, status = "info", editor) {
       }
 
       resolveRun(!/Notification skipped: duplicate/.test(output));
-    });
-  });
-}
-
-function runCommand(command, args) {
-  return new Promise((resolveRun, rejectRun) => {
-    const child = spawn(command, args, { shell: false });
-    let stdout = "";
-    let stderr = "";
-
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk;
-    });
-
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk;
-    });
-
-    child.on("error", rejectRun);
-    child.on("exit", (code) => {
-      if (code !== 0) {
-        rejectRun(new Error(stderr.trim() || `${command} exited with code ${code}`));
-        return;
-      }
-
-      resolveRun(stdout.trim());
     });
   });
 }

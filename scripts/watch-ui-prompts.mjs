@@ -3,7 +3,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawn } from "node:child_process";
+import { spawnHidden, runHiddenCommand } from "./lib/spawn-hidden.mjs";
 
 import { resolveEditorFromAppName } from "./notify-format.mjs";
 
@@ -169,7 +169,7 @@ async function runPromptListener(apps) {
     ...DEFAULT_KEYWORDS
   ];
 
-  const stdout = await runCommand("powershell.exe", psArgs);
+  const stdout = await runHiddenCommand("powershell.exe", psArgs);
   const snapshot = JSON.parse(stdout);
   if (!Array.isArray(snapshot.prompts)) {
     snapshot.prompts = [];
@@ -184,9 +184,8 @@ function runStatus(message, editor) {
       args.push("--editor", editor);
     }
 
-    const child = spawn(process.execPath, args, {
-      stdio: "inherit",
-      shell: false
+    const child = spawnHidden(process.execPath, args, {
+      stdio: "inherit"
     });
 
     child.on("error", rejectRun);
@@ -197,35 +196,6 @@ function runStatus(message, editor) {
       }
 
       rejectRun(new Error(`status.mjs exited with code ${code}`));
-    });
-  });
-}
-
-function runCommand(command, args) {
-  return new Promise((resolveRun, rejectRun) => {
-    const child = spawn(command, args, { shell: false });
-    let stdout = "";
-    let stderr = "";
-
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk;
-    });
-
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk;
-    });
-
-    child.on("error", rejectRun);
-    child.on("exit", (code) => {
-      if (code !== 0) {
-        rejectRun(new Error(stderr.trim() || `${command} exited with code ${code}`));
-        return;
-      }
-
-      resolveRun(stdout.trim());
     });
   });
 }

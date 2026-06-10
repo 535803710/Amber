@@ -40,6 +40,13 @@
       "problemMatcher": []
     },
     {
+      "label": "mi-notic: dashboard",
+      "type": "shell",
+      "command": "npm run dashboard",
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
       "label": "mi-notic: watch all (toast + UI prompts)",
       "type": "shell",
       "command": "npm run watch:all",
