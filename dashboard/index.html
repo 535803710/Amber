@@ -123,11 +123,57 @@
         <p id="connectionMsg" class="hint" role="status" aria-live="polite"></p>
       </section>
 
+      <section class="card">
+        <div class="card-head">
+          <h2 id="recordsTitle"><span>$</span> change records</h2>
+          <span id="recordsBadge" class="badge">loading</span>
+        </div>
+        <dl class="meta">
+          <div><dt id="recordsPendingLabel">pending</dt><dd id="recordsPending">-</dd></div>
+          <div><dt id="recordsFailedLabel">failed</dt><dd id="recordsFailed">-</dd></div>
+          <div><dt id="recordsLastLabel">last success</dt><dd id="recordsLastSuccess">-</dd></div>
+        </dl>
+        <div class="form-grid">
+          <label class="field">
+            <span>FEISHU_CHANGE_WEBHOOK_URL</span>
+            <input id="recordsWebhookUrl" type="url" inputmode="url" autocomplete="off" placeholder="https://...">
+            <small id="recordsWebhookMeta">-</small>
+          </label>
+          <label class="field">
+            <span>FEISHU_CHANGE_WEBHOOK_TOKEN</span>
+            <input id="recordsWebhookToken" type="password" autocomplete="off" placeholder="Bearer token">
+            <small id="recordsTokenMeta">-</small>
+          </label>
+          <div class="inline-checks">
+            <label><input id="clearRecordsWebhook" type="checkbox"> <span id="clearRecordsWebhookLabel">clear webhook</span></label>
+            <label><input id="clearRecordsToken" type="checkbox"> <span id="clearRecordsTokenLabel">clear token</span></label>
+          </div>
+        </div>
+        <div class="actions">
+          <button id="saveRecordsBtn" class="btn btn-primary" type="button">save</button>
+          <button id="replayRecordsBtn" class="btn btn-ghost" type="button">retry failed</button>
+          <a id="openBaseLink" class="btn btn-ghost" href="#" target="_blank" rel="noreferrer">open Base</a>
+        </div>
+        <p id="recordsMsg" class="hint" role="status" aria-live="polite"></p>
+      </section>
+
       <section class="card card-wide">
         <div class="card-head">
           <h2 id="logTitle"><span>$</span> tail .local/watch-toast.log</h2>
         </div>
         <pre id="logTail" class="log">loading...</pre>
+      </section>
+
+      <section class="card">
+        <div class="card-head"><h2><span>$</span> Git 提交记录</h2><span id="commitRecordsBadge" class="badge">loading</span></div>
+        <dl class="meta">
+          <div><dt>仓库数</dt><dd id="commitRepositoryCount">-</dd></div>
+          <div><dt>待发送</dt><dd id="commitRecordsPending">-</dd></div>
+          <div><dt>失败</dt><dd id="commitRecordsFailed">-</dd></div>
+          <div><dt>最近扫描</dt><dd id="commitLastScan">-</dd></div>
+        </dl>
+        <p class="hint">配置 FEISHU_COMMIT_WEBHOOK_URL 后自动发送；只扫描 D:\\project，不修改项目 Hook。</p>
+        <div class="actions"><button id="replayCommitRecordsBtn" class="btn btn-ghost" type="button">重试失败</button></div>
       </section>
     </main>
   </div>

@@ -71,6 +71,27 @@ npm run autostart:install
 
 Cursor 里也能开：命令面板 `Tasks: Run Task` → `mi-notic: watch all (toast + UI prompts)`。
 
+### AI 修改记录
+
+Cursor 和 ChatGPT 的用户级 hook 会按每个完成轮次生成 Git 前后快照。只有实际发生文件变化时才进入本地队列，再由 `watch:all` 投递到飞书多维表格；不会保存完整 diff 或源码内容。
+Cursor 会从 hook 的 `workspace_roots` 识别实际项目目录，并兼容 Windows 下中文载荷偶发损坏。
+
+测试记录链路时，可以只修改文档，以免影响程序功能，也方便核对飞书中的文件统计。
+每次完成轮次都会使用新的事件 ID，便于验证工作流去重。
+飞书收到记录后，可根据完成时间确认本次测试，并核对工具来源。
+
+```powershell
+npm run records:status   # 查看待发送、失败和最近成功时间
+npm run records:dry-run  # 预览待发送的 webhook 内容
+npm run records:replay   # 重放失败队列
+```
+
+Webhook 地址和 Bearer token 可在网页控制台的“修改记录”区域保存，也可写入 `.env.local` 的 `FEISHU_CHANGE_WEBHOOK_URL`、`FEISHU_CHANGE_WEBHOOK_TOKEN`。
+
+### Git 提交记录
+
+`watch:all` 会只读扫描 `D:\project` 下的 Git 本地分支；不修改项目源码、Git 配置或现有 Hook。首次启动只建立基线，之后的新 commit 会写入独立队列并投递到 `FEISHU_COMMIT_WEBHOOK_URL`。可用 `npm run commits:status`、`npm run commits:dry-run`、`npm run commits:replay` 查看和处理本地队列。
+
 ## 最后
 
 跑起来之后是这样的：

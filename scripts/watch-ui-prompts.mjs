@@ -11,7 +11,7 @@ const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const PS_SCRIPT = resolve(SCRIPT_DIR, "windows-ui-prompt-listener.ps1");
 const STATUS_SCRIPT = resolve(SCRIPT_DIR, "status.mjs");
 const WATCHED_FILE = resolve(process.cwd(), ".local/watched-ui-prompts.json");
-const DEFAULT_APPS = ["Codex", "Cursor"];
+const DEFAULT_APPS = ["ChatGPT", "Codex", "Cursor"];
 const DEFAULT_INTERVAL_SECONDS = 2;
 const DEFAULT_KEYWORDS = [
   "confirm",
@@ -61,7 +61,7 @@ async function main() {
     throw new Error(`Unknown arguments: ${args.join(" ")}`);
   }
 
-  console.log(`开始监听 Codex/Cursor 内部确认框（${apps.join(", ")}），间隔 ${intervalSeconds}s`);
+  console.log(`开始监听 ChatGPT/Codex/Cursor 内部确认框（${apps.join(", ")}），间隔 ${intervalSeconds}s`);
   console.log("只读监听：不会自动点击或批准。");
   if (dryRun) {
     console.log("dry-run 模式：只打印，不写入状态或发飞书。");
@@ -277,7 +277,7 @@ function printHelp() {
   node scripts/watch-ui-prompts.mjs [options]
 
 Options:
-  --apps <names>     逗号分隔的进程名匹配，默认 Codex,Cursor
+  --apps <names>     逗号分隔的进程名匹配，默认 ChatGPT,Codex,Cursor
   --interval <sec>   轮询间隔秒数，默认 2
   --dry-run          只打印将要发送的 wait 消息
   --probe            扫描一次后退出

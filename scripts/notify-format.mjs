@@ -63,6 +63,9 @@ export function getNotifyCategoryLabel(status, rawMessage = "") {
 /** 从 app / 进程名识别编辑器 */
 export function resolveEditorFromAppName(appName) {
   const name = String(appName || "").toLowerCase();
+  if (/chatgpt/.test(name)) {
+    return "ChatGPT";
+  }
   if (/codex/.test(name)) {
     return "Codex";
   }
@@ -183,6 +186,9 @@ function matchesAny(text, patterns) {
 
 function normalizeEditorName(value) {
   const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "chatgpt") {
+    return "ChatGPT";
+  }
   if (normalized === "codex") {
     return "Codex";
   }

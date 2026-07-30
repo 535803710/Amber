@@ -16,7 +16,7 @@ const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const PS_SCRIPT = resolve(SCRIPT_DIR, "windows-notification-listener.ps1");
 const STATUS_SCRIPT = resolve(SCRIPT_DIR, "status.mjs");
 const WATCHED_FILE = resolve(process.cwd(), ".local/watched-notifications.json");
-const DEFAULT_APPS = ["Codex", "Cursor"];
+const DEFAULT_APPS = ["ChatGPT", "Codex", "Cursor"];
 const DEFAULT_INTERVAL_SECONDS = 2;
 const ACCESS_GUIDE =
   "Windows 设置 -> 隐私和安全性 -> 通知 -> 用户通知访问";
@@ -367,7 +367,7 @@ function printHelp() {
   node scripts/watch-notifications.mjs [options]
 
 Options:
-  --apps <names>     逗号分隔的应用名匹配，默认 Codex,Cursor；* 表示全部
+  --apps <names>     逗号分隔的应用名匹配，默认 ChatGPT,Codex,Cursor；* 表示全部
   --interval <sec>   轮询间隔秒数，默认 2
   --dry-run          只打印将要转发的消息
   --probe            列出当前可读通知后退出

@@ -1,0 +1,371 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import {
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { resolve } from "node:path";
+import { spawnSync } from "node:child_process";
+import {
+  beginChangeTurn,
+  completeChangeTurn,
+  enqueueChangeEvent,
+  getChangeRecordStatus,
+  listReadyQueueItems,
+  replayFailedEvents,
+  toWebhookPayload
+} from "../scripts/lib/change-records.mjs";
+import { processReadyItems } from "../scripts/change-record-worker.mjs";
+import { readyCommitItems, scanCommitRecords } from "../scripts/lib/commit-records.mjs";
+import {
+  extractCursorPromptFromHookLog,
+  normalizeHookPayload,
+  parseHookJson
+} from "../scripts/hooks/on-change-event.mjs";
+
+test("hook payload parser accepts a UTF-8 BOM", () => {
+  assert.deepEqual(
+    parseHookJson("\uFEFF{\"hook_event_name\":\"UserPromptSubmit\",\"cwd\":\"D:/repo\"}"),
+    { hook_event_name: "UserPromptSubmit", cwd: "D:/repo" }
+  );
+});
+
+test("commit scanner baselines existing history then records a new local commit", () => {
+  const root = mkdtempSync(resolve(tmpdir(), "mi-notic-commit-test-"));
+  const projects = resolve(root, "projects");
+  const repo = resolve(projects, "repo");
+  const state = resolve(root, "state");
+  mkdirSync(repo, { recursive: true });
+  git(repo, ["init"]);
+  git(repo, ["config", "user.email", "test@example.com"]);
+  git(repo, ["config", "user.name", "Test"]);
+  writeFileSync(resolve(repo, "initial.txt"), "initial\n", "utf8");
+  git(repo, ["add", "."]);
+  git(repo, ["commit", "-m", "initial"]);
+  try {
+    assert.equal(scanCommitRecords({ rootDir: state, scanRoot: projects }).events.length, 0);
+    writeFileSync(resolve(repo, "feature.txt"), "feature\n", "utf8");
+    git(repo, ["add", "."]);
+    git(repo, ["commit", "-m", "add feature"]);
+    const result = scanCommitRecords({ rootDir: state, scanRoot: projects });
+    assert.equal(result.events.length, 1);
+    const [item] = readyCommitItems({ rootDir: state });
+    assert.equal(item.envelope.event.event_type, "git_commit");
+    assert.equal(item.envelope.event.commit_subject, "add feature");
+    assert.deepEqual(item.envelope.event.changed_files, [{ status: "A", path: "feature.txt" }]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Cursor hook payload uses workspace root as cwd", () => {
+  assert.equal(
+    normalizeHookPayload({ workspace_roots: ["/d:/project/repo"] }, "Cursor").cwd,
+    "d:/project/repo"
+  );
+});
+
+test("Cursor hook parser recovers stable fields from malformed Chinese JSON", () => {
+  const payload = parseHookJson(
+    '{"conversation_id":"session-1","generation_id":"turn-1","prompt":"中文"坏掉",' +
+      '"session_id":"session-1","hook_event_name":"beforeSubmitPrompt",' +
+      '"workspace_roots":["/d:/project/repo"]}'
+  );
+
+  assert.deepEqual(payload, {
+    hook_event_name: "beforeSubmitPrompt",
+    conversation_id: "session-1",
+    generation_id: "turn-1",
+    session_id: "session-1",
+    status: "",
+    workspace_roots: ["/d:/project/repo"]
+  });
+});
+
+test("Cursor prompt is recovered from its UTF-8 hook log", () => {
+  const log = [
+    "beforeSubmitPrompt",
+    "INPUT:",
+    "{",
+    '  "conversation_id": "session-1",',
+    '  "generation_id": "turn-1",',
+    '  "prompt": "env.itsm\\n中增加注释  sg-intra-paas.transsion  是新加坡演练环境地址",',
+    '  "hook_event_name": "beforeSubmitPrompt"',
+    "}",
+    "",
+    "OUTPUT:",
+    "{}"
+  ].join("\n");
+
+  assert.equal(
+    extractCursorPromptFromHookLog(log, "session-1", "turn-1"),
+    "env.itsm\n中增加注释  sg-intra-paas.transsion  是新加坡演练环境地址"
+  );
+});
+
+test("pre-existing dirty files are excluded from the turn", () => {
+  withRepo(({ repo, state }) => {
+    writeFileSync(resolve(repo, "before.txt"), "dirty before turn\n", "utf8");
+    const begin = beginChangeTurn(hookInput("ChatGPT", repo, "s1", "t1", "change task"), {
+      rootDir: state
+    });
+    assert.equal(begin.ok, true);
+
+    writeFileSync(resolve(repo, "task.txt"), "new task line\n", "utf8");
+    const done = completeChangeTurn(
+      { ...hookInput("ChatGPT", repo, "s1", "t1"), last_assistant_message: "done" },
+      { rootDir: state }
+    );
+
+    assert.equal(done.queued, true);
+    assert.deepEqual(done.event.changed_files, [{ status: "A", path: "task.txt" }]);
+    assert.equal(done.event.additions, 1);
+    assert.equal(done.event.deletions, 0);
+  });
+});
+
+test("add, modify, delete, rename, staged and untracked changes are summarized", () => {
+  withRepo(({ repo, state }) => {
+    writeFileSync(resolve(repo, "modify.txt"), "old\n", "utf8");
+    writeFileSync(resolve(repo, "delete.txt"), "delete me\n", "utf8");
+    writeFileSync(resolve(repo, "rename.txt"), "same content\nline two\n", "utf8");
+    git(repo, ["add", "."]);
+    git(repo, ["commit", "-m", "fixtures"]);
+
+    beginChangeTurn(hookInput("Cursor", repo, "s2", "t2", "multi change"), {
+      rootDir: state
+    });
+    writeFileSync(resolve(repo, "modify.txt"), "old\nnew\n", "utf8");
+    rmSync(resolve(repo, "delete.txt"));
+    git(repo, ["mv", "rename.txt", "renamed.txt"]);
+    writeFileSync(resolve(repo, "untracked-中文.txt"), "hello\n", "utf8");
+    writeFileSync(resolve(repo, "staged.txt"), "staged\n", "utf8");
+    git(repo, ["add", "staged.txt"]);
+
+    const done = completeChangeTurn(hookInput("Cursor", repo, "s2", "t2"), {
+      rootDir: state
+    });
+    const statuses = new Map(done.event.changed_files.map((item) => [item.path, item.status]));
+
+    assert.equal(statuses.get("modify.txt"), "M");
+    assert.equal(statuses.get("delete.txt"), "D");
+    assert.equal(statuses.get("renamed.txt"), "R");
+    assert.equal(statuses.get("staged.txt"), "A");
+    assert.equal(statuses.get("untracked-中文.txt"), "A");
+    assert.equal(done.event.changed_file_count, 5);
+    assert.equal(done.event.additions, 3);
+    assert.equal(done.event.deletions, 1);
+  });
+});
+
+test("no file change produces no queue item", () => {
+  withRepo(({ repo, state }) => {
+    beginChangeTurn(hookInput("ChatGPT", repo, "s3", "t3"), { rootDir: state });
+    const done = completeChangeTurn(hookInput("ChatGPT", repo, "s3", "t3"), {
+      rootDir: state
+    });
+    assert.equal(done.skipped, "no_changes");
+    assert.equal(getChangeRecordStatus({ rootDir: state }).pending, 0);
+  });
+});
+
+test("Cursor completion can match a baseline created before generation_id exists", () => {
+  withRepo(({ repo, state }) => {
+    beginChangeTurn(
+      {
+        source: "Cursor",
+        cwd: repo,
+        conversation_id: "conversation",
+        prompt: "change"
+      },
+      { rootDir: state }
+    );
+    writeFileSync(resolve(repo, "cursor.txt"), "cursor\n", "utf8");
+    const done = completeChangeTurn(
+      {
+        source: "Cursor",
+        cwd: repo,
+        conversation_id: "conversation",
+        generation_id: "generation"
+      },
+      { rootDir: state }
+    );
+    assert.equal(done.queued, true);
+    assert.equal(done.event.session_id, "conversation");
+    assert.equal(done.event.turn_id, "generation");
+  });
+});
+
+test("duplicate event IDs are queued only once and payload maps Base fields", () => {
+  const state = mkdtempSync(resolve(tmpdir(), "mi-notic-state-"));
+  try {
+    const event = sampleEvent("duplicate");
+    assert.equal(enqueueChangeEvent(event, { rootDir: state }).queued, true);
+    assert.equal(enqueueChangeEvent(event, { rootDir: state }).duplicate, true);
+    assert.equal(getChangeRecordStatus({ rootDir: state }).pending, 1);
+    const payload = toWebhookPayload(event);
+    assert.equal(payload["事件 ID"], "duplicate");
+    assert.equal(payload["工具"], "ChatGPT");
+    assert.equal(payload["文件数"], 1);
+  } finally {
+    rmSync(state, { recursive: true, force: true });
+  }
+});
+
+test("worker sends Bearer webhook and moves successful event to sent", async () => {
+  const state = mkdtempSync(resolve(tmpdir(), "mi-notic-state-"));
+  let received;
+  const server = createServer((request, response) => {
+    let body = "";
+    request.setEncoding("utf8");
+    request.on("data", (chunk) => {
+      body += chunk;
+    });
+    request.on("end", () => {
+      received = { authorization: request.headers.authorization, body: JSON.parse(body) };
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end('{"code":0}');
+    });
+  });
+  const url = await listen(server);
+
+  try {
+    enqueueChangeEvent(sampleEvent("success"), { rootDir: state });
+    await processReadyItems({
+      rootDir: state,
+      webhookUrl: url,
+      webhookToken: "secret-token"
+    });
+    assert.equal(received.authorization, "Bearer secret-token");
+    assert.equal(received.body["事件 ID"], "success");
+    const status = getChangeRecordStatus({ rootDir: state });
+    assert.equal(status.pending, 0);
+    assert.equal(status.failed, 0);
+    assert.equal(status.sent, 1);
+    assert.match(status.lastSuccessAt, /^\d{4}-\d{2}-\d{2}T/);
+  } finally {
+    server.close();
+    rmSync(state, { recursive: true, force: true });
+  }
+});
+
+test("401 and timeout remain pending for retry; failed items can be replayed", async () => {
+  const state401 = mkdtempSync(resolve(tmpdir(), "mi-notic-state-"));
+  const unauthorized = createServer((_request, response) => {
+    response.writeHead(401);
+    response.end("unauthorized");
+  });
+  const url401 = await listen(unauthorized);
+  try {
+    enqueueChangeEvent(sampleEvent("unauthorized"), { rootDir: state401 });
+    await processReadyItems({ rootDir: state401, webhookUrl: url401 });
+    const [item] = listReadyQueueItems({
+      rootDir: state401,
+      now: new Date(Date.now() + 60_000)
+    });
+    assert.equal(item.envelope.attempts, 1);
+    assert.match(item.envelope.lastError, /HTTP 401/);
+  } finally {
+    unauthorized.close();
+    rmSync(state401, { recursive: true, force: true });
+  }
+
+  const stateTimeout = mkdtempSync(resolve(tmpdir(), "mi-notic-state-"));
+  const hanging = createServer(() => {});
+  const urlTimeout = await listen(hanging);
+  try {
+    enqueueChangeEvent(sampleEvent("timeout"), { rootDir: stateTimeout });
+    await processReadyItems({
+      rootDir: stateTimeout,
+      webhookUrl: urlTimeout,
+      requestTimeoutMs: 20
+    });
+    const [item] = listReadyQueueItems({
+      rootDir: stateTimeout,
+      now: new Date(Date.now() + 60_000)
+    });
+    assert.equal(item.envelope.attempts, 1);
+    assert.match(item.envelope.lastError, /timed out/);
+
+    const failedPath = resolve(
+      stateTimeout,
+      ".local/change-records/queue/failed/timeout.json"
+    );
+    mkdirSync(resolve(failedPath, ".."), { recursive: true });
+    writeFileSync(failedPath, readFileSync(item.filePath, "utf8"), "utf8");
+    rmSync(item.filePath);
+    assert.equal(replayFailedEvents({ rootDir: stateTimeout }).replayed, 1);
+    assert.equal(getChangeRecordStatus({ rootDir: stateTimeout }).pending, 1);
+  } finally {
+    hanging.closeAllConnections?.();
+    hanging.close();
+    rmSync(stateTimeout, { recursive: true, force: true });
+  }
+});
+
+function withRepo(run) {
+  const root = mkdtempSync(resolve(tmpdir(), "mi-notic-test-"));
+  const repo = resolve(root, "repo");
+  const state = resolve(root, "state");
+  mkdirSync(repo);
+  git(repo, ["init"]);
+  git(repo, ["config", "user.email", "test@example.com"]);
+  git(repo, ["config", "user.name", "Test"]);
+  writeFileSync(resolve(repo, "initial.txt"), "initial\n", "utf8");
+  git(repo, ["add", "."]);
+  git(repo, ["commit", "-m", "initial"]);
+  try {
+    run({ root, repo, state });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+function git(cwd, args) {
+  const result = spawnSync("git", ["-C", cwd, ...args], {
+    encoding: "utf8",
+    windowsHide: true
+  });
+  assert.equal(result.status, 0, result.stderr);
+}
+
+function hookInput(source, cwd, sessionId, turnId, prompt = "") {
+  return { source, cwd, session_id: sessionId, turn_id: turnId, prompt };
+}
+
+function sampleEvent(eventId) {
+  return {
+    schema_version: 1,
+    event_id: eventId,
+    source: "ChatGPT",
+    completed_at: "2026-07-30T00:00:00.000Z",
+    project: "sample",
+    repo_path: "D:\\sample",
+    branch: "main",
+    head_commit: "abc123",
+    session_id: "session",
+    turn_id: "turn",
+    prompt_summary: "change it",
+    result_summary: "changed",
+    changed_files: [{ status: "M", path: "file.txt" }],
+    changed_file_count: 1,
+    additions: 2,
+    deletions: 1,
+    result_status: "completed",
+    collection_quality: "exact"
+  };
+}
+
+function listen(server) {
+  return new Promise((resolveUrl) => {
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      resolveUrl(`http://127.0.0.1:${address.port}/webhook`);
+    });
+  });
+}

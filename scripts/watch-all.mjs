@@ -7,6 +7,8 @@ import { spawn } from "node:child_process";
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const NOTIFICATIONS_SCRIPT = resolve(SCRIPT_DIR, "watch-notifications.mjs");
 const UI_PROMPTS_SCRIPT = resolve(SCRIPT_DIR, "watch-ui-prompts.mjs");
+const CHANGE_RECORD_WORKER = resolve(SCRIPT_DIR, "change-record-worker.mjs");
+const COMMIT_RECORD_WORKER = resolve(SCRIPT_DIR, "commit-record-worker.mjs");
 
 main();
 
@@ -18,12 +20,14 @@ function main() {
     return;
   }
 
-  console.log("启动 mi-notic 全量监听：系统 toast + 内部确认/提问 UI");
+  console.log("启动 mi-notic 全量监听：系统通知 + 内部确认/提问 UI + 修改记录");
   console.log("按 Ctrl+C 停止。");
 
   const children = [
     spawnWatcher("toast", NOTIFICATIONS_SCRIPT, args),
-    spawnWatcher("ui", UI_PROMPTS_SCRIPT, args)
+    spawnWatcher("ui", UI_PROMPTS_SCRIPT, args),
+    spawnWatcher("records", CHANGE_RECORD_WORKER, workerArgs(args)),
+    spawnWatcher("commits", COMMIT_RECORD_WORKER, workerArgs(args))
   ];
 
   const isProbe = args.includes("--probe");
@@ -97,6 +101,17 @@ function spawnWatcher(label, scriptPath, args) {
   return child;
 }
 
+function workerArgs(args) {
+  const result = [];
+  if (args.includes("--dry-run")) {
+    result.push("--dry-run");
+  }
+  if (args.includes("--probe")) {
+    result.push("--once");
+  }
+  return result;
+}
+
 function pipeLines(stream, label, kind) {
   let buffer = "";
 
@@ -136,8 +151,7 @@ function printHelp() {
   node scripts/watch-all.mjs [options]
 
 说明：
-  并行启动 watch-notifications.mjs 与 watch-ui-prompts.mjs。
-  参数会原样传给两个 watcher。
+  并行启动系统通知、内部提问和修改记录 worker。
 
 Examples:
   npm run watch:all

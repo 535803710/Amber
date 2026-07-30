@@ -14,12 +14,21 @@
     "watch:notifications": "node scripts/watch-notifications.mjs",
     "watch:ui-prompts": "node scripts/watch-ui-prompts.mjs",
     "watch:all": "node scripts/watch-all.mjs",
+    "records:worker": "node scripts/change-record-worker.mjs",
+    "records:status": "node scripts/change-record-worker.mjs --status",
+    "records:dry-run": "node scripts/change-record-worker.mjs --once --dry-run",
+    "records:replay": "node scripts/change-record-worker.mjs --replay-failed",
+    "commits:worker": "node scripts/commit-record-worker.mjs",
+    "commits:status": "node scripts/commit-record-worker.mjs --status",
+    "commits:dry-run": "node scripts/commit-record-worker.mjs --once --dry-run",
+    "commits:replay": "node scripts/commit-record-worker.mjs --replay-failed",
     "notify:ask": "node scripts/notify-ask.mjs",
     "autostart:install": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-autostart.ps1 -StartNow",
     "autostart:uninstall": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-autostart.ps1 -Uninstall",
     "autostart:status": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-autostart.ps1 -Status",
     "autostart:start": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-watch-background.ps1",
     "autostart:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stop-watch-background.ps1",
-    "dashboard": "node scripts/dashboard-server.mjs"
+    "dashboard": "node scripts/dashboard-server.mjs",
+    "test": "node --test"
   }
 }

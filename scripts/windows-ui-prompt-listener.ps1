@@ -1,7 +1,7 @@
-# Codex/Cursor UI Automation probe (read-only)
+# ChatGPT/Codex/Cursor UI Automation probe (read-only)
 
 param(
-    [string[]]$Apps = @("Codex", "Cursor"),
+    [string[]]$Apps = @("ChatGPT", "Codex", "Cursor"),
     [string[]]$Keywords = @(
         "confirm", "approve", "allow", "run command", "permission",
         "ask", "question", "answer", "input needed", "no answer provided"

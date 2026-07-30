@@ -4,6 +4,7 @@ const els = {
   lastTitle: document.getElementById("lastTitle"),
   rulesTitle: document.getElementById("rulesTitle"),
   configTitle: document.getElementById("configTitle"),
+  recordsTitle: document.getElementById("recordsTitle"),
   logTitle: document.getElementById("logTitle"),
   pidLabel: document.getElementById("pidLabel"),
   accessLabel: document.getElementById("accessLabel"),
@@ -38,6 +39,31 @@ const els = {
   autostartStatus: document.getElementById("autostartStatus"),
   settingsMsg: document.getElementById("settingsMsg"),
   connectionMsg: document.getElementById("connectionMsg"),
+  recordsBadge: document.getElementById("recordsBadge"),
+  recordsPendingLabel: document.getElementById("recordsPendingLabel"),
+  recordsFailedLabel: document.getElementById("recordsFailedLabel"),
+  recordsLastLabel: document.getElementById("recordsLastLabel"),
+  recordsPending: document.getElementById("recordsPending"),
+  recordsFailed: document.getElementById("recordsFailed"),
+  recordsLastSuccess: document.getElementById("recordsLastSuccess"),
+  recordsWebhookUrl: document.getElementById("recordsWebhookUrl"),
+  recordsWebhookToken: document.getElementById("recordsWebhookToken"),
+  recordsWebhookMeta: document.getElementById("recordsWebhookMeta"),
+  recordsTokenMeta: document.getElementById("recordsTokenMeta"),
+  clearRecordsWebhook: document.getElementById("clearRecordsWebhook"),
+  clearRecordsToken: document.getElementById("clearRecordsToken"),
+  clearRecordsWebhookLabel: document.getElementById("clearRecordsWebhookLabel"),
+  clearRecordsTokenLabel: document.getElementById("clearRecordsTokenLabel"),
+  saveRecordsBtn: document.getElementById("saveRecordsBtn"),
+  replayRecordsBtn: document.getElementById("replayRecordsBtn"),
+  openBaseLink: document.getElementById("openBaseLink"),
+  recordsMsg: document.getElementById("recordsMsg"),
+  commitRecordsBadge: document.getElementById("commitRecordsBadge"),
+  commitRepositoryCount: document.getElementById("commitRepositoryCount"),
+  commitRecordsPending: document.getElementById("commitRecordsPending"),
+  commitRecordsFailed: document.getElementById("commitRecordsFailed"),
+  commitLastScan: document.getElementById("commitLastScan"),
+  replayCommitRecordsBtn: document.getElementById("replayCommitRecordsBtn"),
   startBtn: document.getElementById("startBtn"),
   stopBtn: document.getElementById("stopBtn"),
   saveSettingsBtn: document.getElementById("saveSettingsBtn"),
@@ -73,6 +99,7 @@ const I18N = {
     lastTitle: "last",
     rulesTitle: "rules",
     configTitle: "config",
+    recordsTitle: "change records",
     logTitle: "tail .local/watch-toast.log",
     pidLabel: "pid",
     accessLabel: "access",
@@ -139,6 +166,20 @@ const I18N = {
     logEmpty: "no log. watcher writes to .local/watch-toast.log.",
     webhookSet: "set",
     webhookUnset: "unset",
+    recordsPending: "pending",
+    recordsFailed: "failed",
+    recordsLast: "last success",
+    recordsConfigured: "configured",
+    recordsUnconfigured: "not configured",
+    recordsSave: "save",
+    recordsRetry: "retry failed",
+    recordsOpen: "open Base",
+    recordsClearWebhook: "clear webhook",
+    recordsClearToken: "clear token",
+    recordsTokenSet: "token: set",
+    recordsTokenUnset: "token: unset",
+    recordsSaved: "change record config saved",
+    recordsReplayed: (count) => `${count} failed event(s) replayed`,
     requestFailed: (status) => `Request failed (${status})`
   },
   zh: {
@@ -159,6 +200,7 @@ const I18N = {
     lastTitle: "最近通知",
     rulesTitle: "通知规则",
     configTitle: "连接配置",
+    recordsTitle: "修改记录",
     logTitle: "tail .local/watch-toast.log",
     pidLabel: "进程",
     accessLabel: "权限",
@@ -225,6 +267,20 @@ const I18N = {
     logEmpty: "暂无日志。监听器会写入 .local/watch-toast.log。",
     webhookSet: "已配置",
     webhookUnset: "未配置",
+    recordsPending: "待发送",
+    recordsFailed: "失败",
+    recordsLast: "最近成功",
+    recordsConfigured: "已配置",
+    recordsUnconfigured: "未配置",
+    recordsSave: "保存配置",
+    recordsRetry: "重试失败",
+    recordsOpen: "打开 Base",
+    recordsClearWebhook: "清空 webhook",
+    recordsClearToken: "清空 token",
+    recordsTokenSet: "token：已配置",
+    recordsTokenUnset: "token：未配置",
+    recordsSaved: "修改记录配置已保存",
+    recordsReplayed: (count) => `已重放 ${count} 条失败记录`,
     requestFailed: (status) => `请求失败 (${status})`
   }
 };
@@ -321,10 +377,19 @@ function applyLanguage(language, { persist = false } = {}) {
   setCommandTitle(els.lastTitle, "lastTitle");
   setCommandTitle(els.rulesTitle, "rulesTitle");
   setCommandTitle(els.configTitle, "configTitle");
+  setCommandTitle(els.recordsTitle, "recordsTitle");
   setCommandTitle(els.logTitle, "logTitle");
   setText(els.pidLabel, "pidLabel");
   setText(els.accessLabel, "accessLabel");
   setText(els.webhookStateLabel, "webhookStateLabel");
+  setText(els.recordsPendingLabel, "recordsPending");
+  setText(els.recordsFailedLabel, "recordsFailed");
+  setText(els.recordsLastLabel, "recordsLast");
+  setText(els.clearRecordsWebhookLabel, "recordsClearWebhook");
+  setText(els.clearRecordsTokenLabel, "recordsClearToken");
+  setText(els.saveRecordsBtn, "recordsSave");
+  setText(els.replayRecordsBtn, "recordsRetry");
+  setText(els.openBaseLink, "recordsOpen");
   setText(els.rulesHint, "rulesHint");
   setText(els.waitRuleTitle, "waitRuleTitle");
   setText(els.waitRuleDesc, "waitRuleDesc");
@@ -431,6 +496,8 @@ function renderState(state) {
   const accessOk = state.notificationAccess?.ok;
   els.accessStatus.textContent = accessOk ? t("allowed") : state.notificationAccess?.accessStatus || t("unknown");
   renderFeishuState(state.feishu || { configured: state.feishuConfigured });
+  renderChangeRecords(state.changeRecords || {});
+  renderCommitRecords(state.commitRecords || {});
   renderAutostartState(state.autostart);
 
   els.accessHint.textContent = accessOk
@@ -452,6 +519,32 @@ function renderState(state) {
     ? state.logTail.join("\n")
     : t("logEmpty");
   els.logTail.scrollTop = els.logTail.scrollHeight;
+}
+
+function renderChangeRecords(records) {
+  const configured = Boolean(records.configured && records.tokenConfigured);
+  els.recordsBadge.textContent = configured ? t("recordsConfigured") : t("recordsUnconfigured");
+  els.recordsBadge.className = `badge ${configured ? "on" : "off"}`;
+  els.recordsPending.textContent = String(records.pending ?? 0);
+  els.recordsFailed.textContent = String(records.failed ?? 0);
+  els.recordsLastSuccess.textContent = formatTime(records.lastSuccessAt);
+  els.recordsWebhookMeta.textContent = records.webhookMasked
+    ? t("currentSet", records.webhookMasked)
+    : t("currentUnset");
+  els.recordsTokenMeta.textContent = records.tokenConfigured
+    ? t("recordsTokenSet")
+    : t("recordsTokenUnset");
+  els.openBaseLink.href = records.baseUrl || "#";
+}
+
+function renderCommitRecords(records) {
+  const configured = Boolean(records.configured);
+  els.commitRecordsBadge.textContent = configured ? "已配置" : "未配置";
+  els.commitRecordsBadge.className = `badge ${configured ? "on" : "off"}`;
+  els.commitRepositoryCount.textContent = String(records.repositoryCount ?? 0);
+  els.commitRecordsPending.textContent = String(records.pending ?? 0);
+  els.commitRecordsFailed.textContent = String(records.failed ?? 0);
+  els.commitLastScan.textContent = formatTime(records.lastScanAt);
 }
 
 function renderFeishuState(feishu) {
@@ -595,6 +688,31 @@ async function toggleAutostart() {
 function syncClearControls() {
   els.webhookUrl.disabled = els.clearWebhook.checked;
   els.webhookSecret.disabled = els.clearSecret.checked;
+  els.recordsWebhookUrl.disabled = els.clearRecordsWebhook.checked;
+  els.recordsWebhookToken.disabled = els.clearRecordsToken.checked;
+}
+
+async function saveChangeRecordSettings() {
+  const payload = {
+    clearWebhook: els.clearRecordsWebhook.checked,
+    clearToken: els.clearRecordsToken.checked
+  };
+  if (els.recordsWebhookUrl.value.trim()) {
+    payload.webhookUrl = els.recordsWebhookUrl.value.trim();
+  }
+  if (els.recordsWebhookToken.value.trim()) {
+    payload.webhookToken = els.recordsWebhookToken.value.trim();
+  }
+  await api("/api/change-record-settings", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+  els.recordsWebhookUrl.value = "";
+  els.recordsWebhookToken.value = "";
+  els.clearRecordsWebhook.checked = false;
+  els.clearRecordsToken.checked = false;
+  syncClearControls();
+  els.recordsMsg.textContent = t("recordsSaved");
 }
 
 els.startBtn.addEventListener("click", async () => {
@@ -623,6 +741,24 @@ els.testNotifyBtn.addEventListener("click", async () => {
   );
 });
 
+els.saveRecordsBtn.addEventListener("click", () => {
+  runAction(els.saveRecordsBtn, t("saveBusy"), t("recordsSaved"), saveChangeRecordSettings);
+});
+
+els.replayRecordsBtn.addEventListener("click", () => {
+  runAction(els.replayRecordsBtn, t("saveBusy"), t("recordsRetry"), async () => {
+    const result = await api("/api/change-records/replay", { method: "POST" });
+    els.recordsMsg.textContent = t("recordsReplayed", result.replayed || 0);
+  });
+});
+
+els.replayCommitRecordsBtn.addEventListener("click", () => {
+  runAction(els.replayCommitRecordsBtn, "处理中", "重试失败", async () => {
+    await api("/api/commit-records/replay", { method: "POST" });
+    await refreshState();
+  });
+});
+
 els.toggleAutostartBtn.addEventListener("click", () => {
   const enabling = !latestState?.autostart?.installed;
   runAction(
@@ -646,6 +782,8 @@ darkQuery.addEventListener("change", () => {
 });
 els.clearWebhook.addEventListener("change", syncClearControls);
 els.clearSecret.addEventListener("change", syncClearControls);
+els.clearRecordsWebhook.addEventListener("change", syncClearControls);
+els.clearRecordsToken.addEventListener("change", syncClearControls);
 
 async function runAction(button, busyText, successMessage, action) {
   try {

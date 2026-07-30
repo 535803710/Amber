@@ -7,6 +7,11 @@ import { fileURLToPath } from "node:url";
 import { spawnHidden, runHiddenCommand } from "./lib/spawn-hidden.mjs";
 import { readSettings, writeSettings } from "./lib/settings.mjs";
 import {
+  getChangeRecordStatus,
+  replayFailedEvents
+} from "./lib/change-records.mjs";
+import { getCommitRecordStatus, replayFailedCommitEvents } from "./lib/commit-records.mjs";
+import {
   getWatcherStatus,
   readLogTail,
   startWatcher,
@@ -89,6 +94,21 @@ async function handleApi(req, res, pathname, url) {
     return;
   }
 
+  if (pathname === "/api/change-record-settings" && req.method === "POST") {
+    const body = await readJsonBody(req);
+    sendJson(res, 200, saveChangeRecordSettings(body));
+    return;
+  }
+
+  if (pathname === "/api/change-records/replay" && req.method === "POST") {
+    sendJson(res, 200, replayFailedEvents({ rootDir: ROOT_DIR }));
+    return;
+  }
+  if (pathname === "/api/commit-records/replay" && req.method === "POST") {
+    sendJson(res, 200, replayFailedCommitEvents({ rootDir: ROOT_DIR }));
+    return;
+  }
+
   if (pathname === "/api/autostart" && req.method === "POST") {
     const body = await readJsonBody(req);
     const result = await setAutostart(Boolean(body.enabled));
@@ -132,9 +152,33 @@ async function buildState() {
     notificationAccess,
     feishu,
     feishuConfigured: feishu.configured,
+    changeRecords: {
+      ...getChangeRecordStatus({ rootDir: ROOT_DIR }),
+      webhookMasked: maskWebhookUrl(process.env.FEISHU_CHANGE_WEBHOOK_URL?.trim() || ""),
+      baseUrl: "https://transsioner.feishu.cn/base/Inmhb4Vl0alBIAsvzaxcxC0Ln0d"
+    },
+    commitRecords: getCommitRecordStatus({ rootDir: ROOT_DIR }),
     autostart,
     logTail: readLogTail(ROOT_DIR, 30)
   };
+}
+
+function saveChangeRecordSettings(body) {
+  const webhookUrl = normalizeOptionalString(body.webhookUrl);
+  const webhookToken = normalizeOptionalString(body.webhookToken);
+  const clearWebhook = body.clearWebhook === true;
+  const clearToken = body.clearToken === true;
+
+  if (webhookUrl && !isHttpUrl(webhookUrl)) {
+    throw createHttpError(400, "修改记录 Webhook 必须是 http 或 https 地址。");
+  }
+
+  writeEnvLocalValues({
+    FEISHU_CHANGE_WEBHOOK_URL: clearWebhook ? null : webhookUrl,
+    FEISHU_CHANGE_WEBHOOK_TOKEN: clearToken ? null : webhookToken
+  });
+  reloadEnvKeys(["FEISHU_CHANGE_WEBHOOK_URL", "FEISHU_CHANGE_WEBHOOK_TOKEN"]);
+  return getChangeRecordStatus({ rootDir: ROOT_DIR });
 }
 
 function readStatus() {
