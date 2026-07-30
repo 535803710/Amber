@@ -24,6 +24,7 @@ import { processReadyItems } from "../scripts/change-record-worker.mjs";
 import { readyCommitItems, scanCommitRecords } from "../scripts/lib/commit-records.mjs";
 import {
   extractCursorPromptFromHookLog,
+  extractCursorResponseFromHookLog,
   normalizeHookPayload,
   parseHookJson
 } from "../scripts/hooks/on-change-event.mjs";
@@ -105,6 +106,32 @@ test("Cursor prompt is recovered from its UTF-8 hook log", () => {
   assert.equal(
     extractCursorPromptFromHookLog(log, "session-1", "turn-1"),
     "env.itsm\n中增加注释  sg-intra-paas.transsion  是新加坡演练环境地址"
+  );
+});
+
+test("Cursor response prefers the UTF-8 hook log over a mojibake stdin payload", () => {
+  const log = [
+    "afterAgentResponse",
+    "INPUT:",
+    "{",
+    '  "conversation_id": "session-1",',
+    '  "generation_id": "turn-1",',
+    '  "text": "已修改文件：动作：新增文件 → 动作：修改文件",',
+    '  "hook_event_name": "afterAgentResponse"',
+    "}",
+    "",
+    "OUTPUT:",
+    "{}"
+  ].join("\n");
+
+  assert.equal(
+    extractCursorResponseFromHookLog(
+      log,
+      "session-1",
+      "turn-1",
+      "宸蹭慨鏀?鏂囦欢"
+    ),
+    "已修改文件：动作：新增文件 → 动作：修改文件"
   );
 });
 

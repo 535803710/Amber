@@ -34,6 +34,7 @@ async function main() {
   const input = normalizeHookPayload(payload, source);
   if (source === "Cursor" && event === "stop") {
     input.prompt = findCursorPromptFromLogs(payload) || input.prompt;
+    input.text = findCursorResponseFromLogs(payload, input.text);
   }
 
   if (event === "usersubmitprompt" || event === "userpromptsubmit" || event === "beforesubmitprompt") {
@@ -123,6 +124,38 @@ export function extractCursorPromptFromHookLog(log, sessionId, turnId) {
   return "";
 }
 
+export function extractCursorResponseFromHookLog(log, sessionId, turnId, fallback = "") {
+  const text = String(log || "");
+  let offset = 0;
+  while (offset < text.length) {
+    const inputStart = text.indexOf("INPUT:", offset);
+    if (inputStart === -1) {
+      break;
+    }
+    const jsonStart = text.indexOf("{", inputStart);
+    const outputStart = text.indexOf("\nOUTPUT:", jsonStart);
+    if (jsonStart === -1 || outputStart === -1) {
+      break;
+    }
+    try {
+      const payload = JSON.parse(text.slice(jsonStart, outputStart).trim());
+      if (
+        payload.hook_event_name === "afterAgentResponse" &&
+        (payload.session_id || payload.conversation_id) === sessionId &&
+        (!turnId || payload.generation_id === turnId) &&
+        typeof payload.text === "string" &&
+        payload.text.trim()
+      ) {
+        return payload.text.trim();
+      }
+    } catch {
+      // Keep looking for a valid matching response.
+    }
+    offset = outputStart + 1;
+  }
+  return String(fallback || "");
+}
+
 function findCursorPromptFromLogs(payload) {
   const appData = process.env.APPDATA;
   if (!appData) {
@@ -159,6 +192,45 @@ function findCursorPromptFromLogs(payload) {
     }
   }
   return "";
+}
+
+function findCursorResponseFromLogs(payload, fallback = "") {
+  const appData = process.env.APPDATA;
+  if (!appData) {
+    return fallback;
+  }
+
+  const logRoot = resolve(appData, "Cursor/logs");
+  if (!existsSync(logRoot)) {
+    return fallback;
+  }
+
+  const sessionDirs = readdirSync(logRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort()
+    .reverse()
+    .slice(0, 3);
+  const logFiles = sessionDirs
+    .flatMap((name) => collectCursorHookLogs(resolve(logRoot, name)))
+    .sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+  for (const item of logFiles) {
+    try {
+      const response = extractCursorResponseFromHookLog(
+        readFileSync(item.path, "utf8"),
+        payload.session_id || payload.conversation_id || "",
+        payload.generation_id || "",
+        ""
+      );
+      if (response) {
+        return response;
+      }
+    } catch {
+      // A log can rotate while the hook is reading it.
+    }
+  }
+  return fallback;
 }
 
 function collectCursorHookLogs(directory) {
