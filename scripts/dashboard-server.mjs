@@ -11,6 +11,7 @@ import {
   replayFailedEvents
 } from "./lib/change-records.mjs";
 import { getCommitRecordStatus, replayFailedCommitEvents } from "./lib/commit-records.mjs";
+import { listRecordPage } from "./lib/record-listing.mjs";
 import {
   getWatcherStatus,
   readLogTail,
@@ -91,6 +92,16 @@ async function handleApi(req, res, pathname, url) {
     const body = await readJsonBody(req);
     const result = saveFeishuSettings(body);
     sendJson(res, 200, result);
+    return;
+  }
+
+  if (pathname === "/api/change-records" && req.method === "GET") {
+    sendJson(res, 200, listRecordPage("change", url.searchParams, { rootDir: ROOT_DIR }));
+    return;
+  }
+
+  if (pathname === "/api/commit-records" && req.method === "GET") {
+    sendJson(res, 200, listRecordPage("commit", url.searchParams, { rootDir: ROOT_DIR }));
     return;
   }
 

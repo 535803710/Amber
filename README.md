@@ -52,6 +52,8 @@ copy .env.example .env.local
 
 或者跑 `npm run dashboard`，浏览器开 http://127.0.0.1:3847 。开关监听、勾选哪些场景发飞书、看最近一条状态，都在这一页。先点「测试通知」，手环震了就说明链路通了。
 
+控制台顶部可进入两个只读记录页：`/change-records.html` 浏览 AI 修改记录，`/commit-records.html` 浏览 Git 提交记录。两页都从本地 `.local` 队列读取，支持按投递状态筛选、分页和展开详情；不会读取飞书 Base 或暴露 webhook 响应、会话标识等内部字段。
+
 ![web页面](https://pub-a953275fa2c34c18b80fc1f84e3ea746.r2.dev/xiaowo/2026/06/6b07a23b4e502d4973170411c3056e6a.png)
 
 ### 命令行

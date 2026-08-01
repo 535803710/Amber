@@ -73,6 +73,9 @@ const els = {
   refreshBtn: document.getElementById("refreshBtn"),
   themeToggle: document.getElementById("themeToggle"),
   langToggle: document.getElementById("langToggle"),
+  navDashboard: document.getElementById("navDashboard"),
+  navChangeRecords: document.getElementById("navChangeRecords"),
+  navCommitRecords: document.getElementById("navCommitRecords"),
   toast: document.getElementById("toast")
 };
 
@@ -85,6 +88,9 @@ const I18N = {
     htmlLang: "en",
     documentTitle: "mi-notic console",
     subtitle: "toast -> feishu",
+    navDashboard: "dashboard",
+    navChangeRecords: "AI changes",
+    navCommitRecords: "Git commits",
     langToggle: "lang zh",
     langAria: "Switch language",
     languageChanged: "language: english",
@@ -186,6 +192,9 @@ const I18N = {
     htmlLang: "zh-CN",
     documentTitle: "mi-notic 控制台",
     subtitle: "toast -> 飞书",
+    navDashboard: "控制台",
+    navChangeRecords: "AI 修改记录",
+    navCommitRecords: "Git 提交记录",
     langToggle: "语言 en",
     langAria: "切换语言",
     languageChanged: "语言：中文",
@@ -366,6 +375,9 @@ function applyLanguage(language, { persist = false } = {}) {
   document.documentElement.lang = t("htmlLang");
   document.title = t("documentTitle");
   setText(els.subtitle, "subtitle");
+  setText(els.navDashboard, "navDashboard");
+  setText(els.navChangeRecords, "navChangeRecords");
+  setText(els.navCommitRecords, "navCommitRecords");
   setText(els.langToggle, "langToggle");
   els.langToggle.setAttribute("aria-label", t("langAria"));
   setText(els.refreshBtn, "refresh");

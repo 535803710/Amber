@@ -622,6 +622,113 @@ h1 {
   font-weight: 700;
 }
 
+.page-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 16px;
+}
+
+.page-nav a,
+.filter-button {
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 7px 10px;
+  color: var(--muted);
+  background: var(--panel);
+  font: inherit;
+  font-size: 12px;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.page-nav a:hover,
+.page-nav a.active,
+.filter-button:hover,
+.filter-button.active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.record-panel {
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--panel), transparent 2%);
+  box-shadow: var(--shadow);
+}
+
+.record-toolbar,
+.pagination,
+.filter-group,
+.record-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.record-toolbar {
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.record-toolbar .hint {
+  margin: 0;
+}
+
+.record-list {
+  display: grid;
+  gap: 12px;
+}
+
+.record-card {
+  padding: 15px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+}
+
+.record-card-head {
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+
+.record-summary {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.record-status.pending { color: var(--warn); background: var(--warn-soft); }
+.record-status.sent { color: var(--accent); background: var(--accent-soft); }
+.record-status.failed { color: var(--danger); background: var(--danger-soft); }
+
+.record-meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px 16px;
+  margin: 0;
+}
+
+.record-meta dt { color: var(--muted); font-size: 11px; }
+.record-meta dd { margin: 3px 0 0; overflow-wrap: anywhere; font-size: 12px; }
+
+.record-details { margin-top: 14px; border-top: 1px dashed var(--line); padding-top: 12px; }
+.record-details summary { color: var(--accent); cursor: pointer; }
+.record-detail-body { display: grid; gap: 12px; margin-top: 12px; }
+.record-detail-body h3 { margin: 0 0 5px; color: var(--muted); font-size: 12px; }
+.record-detail-body pre { margin: 0; overflow: auto; white-space: pre-wrap; font: inherit; font-size: 12px; line-height: 1.6; }
+.record-message { margin: 0; padding: 30px; color: var(--muted); text-align: center; }
+.error-message { color: var(--danger); }
+.pagination { justify-content: center; margin-top: 18px; }
+.pagination-label { color: var(--muted); font-size: 12px; }
+
 @media (max-width: 860px) {
   .grid {
     grid-template-columns: 1fr;
@@ -667,6 +774,19 @@ h1 {
   .status-time,
   .hint-inline {
     text-align: left;
+  }
+
+  .record-meta {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .record-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .record-panel {
+    padding: 14px;
   }
 
   .actions .btn,

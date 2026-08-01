@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-record-type="commit">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Git 提交记录 · mi-notic</title>
+  <script>
+    (() => {
+      const saved = localStorage.getItem("mi-notic-theme");
+      if (saved === "light" || saved === "dark") document.documentElement.dataset.theme = saved;
+    })();
+  </script>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <div class="page">
+    <header class="header">
+      <div class="header-copy">
+        <p class="prompt-line"><span>mi-notic@local</span>:<span>~/control</span>$ records commit</p>
+        <h1 id="pageTitle">git 提交记录</h1>
+        <p id="subtitle" class="subtitle">本地扫描队列的只读浏览</p>
+      </div>
+      <div class="header-actions">
+        <button id="themeToggle" class="btn btn-ghost" type="button">theme</button>
+        <button id="langToggle" class="btn btn-ghost" type="button">lang</button>
+      </div>
+    </header>
+
+    <nav class="page-nav" aria-label="控制台导航">
+      <a href="/" data-nav="dashboard">控制台</a>
+      <a href="/change-records.html" data-nav="change">AI 修改记录</a>
+      <a href="/commit-records.html" data-nav="commit">Git 提交记录</a>
+    </nav>
+
+    <main>
+      <section class="record-panel" aria-labelledby="pageTitle">
+        <div class="record-toolbar">
+          <div id="statusFilters" class="filter-group" aria-label="记录状态"></div>
+          <p id="recordCount" class="hint" aria-live="polite"></p>
+        </div>
+        <div id="recordList" class="record-list" aria-live="polite"></div>
+        <div id="pagination" class="pagination" aria-label="分页"></div>
+      </section>
+    </main>
+  </div>
+  <script src="/records.js"></script>
+</body>
+</html>
