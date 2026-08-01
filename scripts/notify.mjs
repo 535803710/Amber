@@ -236,6 +236,6 @@ Options:
 Environment:
   FEISHU_WEBHOOK_URL      Required unless --dry-run is used
   FEISHU_WEBHOOK_SECRET   Optional, for Feishu signature verification
-  MI_NOTIC_EDITOR         Optional default editor when auto-detection fails
+  AMBER_EDITOR         Optional default editor when auto-detection fails
 `);
 }

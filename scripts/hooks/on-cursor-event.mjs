@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * Cursor 用户级 Hook：检测 Agent 提问/待回应场景并调用 mi-notic 发 wait 通知。
+ * Cursor 用户级 Hook：检测 Agent 提问/待回应场景并调用 Amber 发 wait 通知。
  * 配置见 ~/.cursor/hooks.json
  */
 
@@ -11,10 +11,10 @@ import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
-const MI_NOTIC_HOME = resolveMiNoticHome();
-const NOTIFY_ASK = resolve(MI_NOTIC_HOME, "scripts/notify-ask.mjs");
-const LOG_FILE = resolve(MI_NOTIC_HOME, ".local/cursor-hook.log");
-const DEDUPE_FILE = resolve(MI_NOTIC_HOME, ".local/cursor-hook-dedupe.json");
+const AMBER_HOME = resolveAmberHome();
+const NOTIFY_ASK = resolve(AMBER_HOME, "scripts/notify-ask.mjs");
+const LOG_FILE = resolve(AMBER_HOME, ".local/cursor-hook.log");
+const DEDUPE_FILE = resolve(AMBER_HOME, ".local/cursor-hook-dedupe.json");
 const DEDUPE_SECONDS = 120;
 
 // 失焦时 watch:all [toast] 会处理，Hook 不再重复发
@@ -164,11 +164,11 @@ function truncate(text, max) {
   return `${normalized.slice(0, max - 3)}...`;
 }
 
-function resolveMiNoticHome() {
+function resolveAmberHome() {
   const candidates = [
-    process.env.MI_NOTIC_HOME,
+    process.env.AMBER_HOME,
     resolve(SCRIPT_DIR, "../.."),
-    "D:/project/mi-notic"
+    "D:/project/Amber"
   ].filter(Boolean);
 
   for (const home of candidates) {
@@ -178,13 +178,13 @@ function resolveMiNoticHome() {
     }
   }
 
-  throw new Error("找不到 mi-notic 目录");
+  throw new Error("找不到 Amber 目录");
 }
 
 function runNotifyAsk(summary) {
   return new Promise((resolveRun, rejectRun) => {
     const child = spawn(process.execPath, [NOTIFY_ASK, summary], {
-      cwd: MI_NOTIC_HOME,
+      cwd: AMBER_HOME,
       stdio: "ignore",
       shell: false
     });

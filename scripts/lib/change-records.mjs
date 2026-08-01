@@ -11,6 +11,11 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import {
+  claimReadyOutboxItems,
+  countOutboxFiles,
+  ensureOutboxDirs
+} from "./file-outbox.mjs";
 
 export const CHANGE_RECORD_DIR = ".local/change-records";
 export const RETRY_DELAYS_MS = [10_000, 30_000, 120_000, 600_000, 1_800_000, 1_800_000, 1_800_000, 1_800_000];
@@ -44,6 +49,7 @@ export function beginChangeTurn(input, options = {}) {
     project: basename(repo.root),
     branch: repo.branch,
     headCommit: repo.headCommit,
+    ...readGitAuthor(repo.root),
     baselineTree: tree,
     prompt: truncateText(extractPrompt(input), MAX_PROMPT_LENGTH),
     startedAt: new Date().toISOString()
@@ -138,6 +144,8 @@ export function completeChangeTurn(input, options = {}) {
       repo_path: repo.root,
       branch: repo.branch || baseline.branch,
       head_commit: repo.headCommit || baseline.headCommit,
+      author_name: baseline.authorName || "",
+      author_email: baseline.authorEmail || "",
       session_id: baseline.sessionId,
       turn_id: eventTurnId,
       prompt_summary: truncateText(extractPrompt(input) || baseline.prompt, MAX_PROMPT_LENGTH),
@@ -172,7 +180,13 @@ export function enqueueChangeEvent(event, options = {}) {
   const sentFile = queueFile(rootDir, "sent", eventId);
   const failedFile = queueFile(rootDir, "failed", eventId);
 
-  if (existsSync(pendingFile) || existsSync(sentFile) || existsSync(failedFile)) {
+  const processingFile = queueFile(rootDir, "processing", eventId);
+  if (
+    existsSync(pendingFile) ||
+    existsSync(processingFile) ||
+    existsSync(sentFile) ||
+    existsSync(failedFile)
+  ) {
     return { queued: false, duplicate: true };
   }
 
@@ -201,12 +215,24 @@ export function listReadyQueueItems(options = {}) {
     .sort((a, b) => String(a.envelope.createdAt).localeCompare(String(b.envelope.createdAt)));
 }
 
+export function claimReadyQueueItems(options = {}) {
+  const rootDir = resolve(options.rootDir || process.cwd());
+  return claimReadyOutboxItems({
+    queueRoot: queueRoot(rootDir),
+    now: options.now || new Date(),
+    limit: options.limit ?? Infinity,
+    processingLeaseMs: options.processingLeaseMs,
+    readEnvelope: readJson,
+    writeEnvelope: writeJsonAtomic
+  });
+}
+
 export function markQueueItemSent(item, response, options = {}) {
   const rootDir = resolve(options.rootDir || process.cwd());
   const eventId = safeFileName(item.envelope.event.event_id);
   const target = queueFile(rootDir, "sent", eventId);
   writeJsonAtomic(target, {
-    ...item.envelope,
+    ...withoutClaim(item.envelope),
     sentAt: new Date().toISOString(),
     response: sanitizeResponse(response)
   });
@@ -218,7 +244,7 @@ export function markQueueItemFailed(item, error, options = {}) {
   const attempts = Number(item.envelope.attempts || 0) + 1;
   const lastError = truncateText(error?.message || String(error), 1_000);
   const nextEnvelope = {
-    ...item.envelope,
+    ...withoutClaim(item.envelope),
     attempts,
     lastError,
     lastAttemptAt: new Date().toISOString()
@@ -233,7 +259,11 @@ export function markQueueItemFailed(item, error, options = {}) {
   }
 
   nextEnvelope.nextAttemptAt = new Date(Date.now() + RETRY_DELAYS_MS[attempts - 1]).toISOString();
-  writeJsonAtomic(item.filePath, nextEnvelope);
+  const pendingFile = queueFile(rootDir, "pending", safeFileName(item.envelope.event.event_id));
+  writeJsonAtomic(pendingFile, nextEnvelope);
+  if (item.filePath !== pendingFile) {
+    removeIfExists(item.filePath);
+  }
   return { failedPermanently: false, attempts, nextAttemptAt: nextEnvelope.nextAttemptAt };
 }
 
@@ -270,8 +300,10 @@ export function getChangeRecordStatus(options = {}) {
     configured: Boolean(options.webhookUrl || process.env.FEISHU_CHANGE_WEBHOOK_URL),
     tokenConfigured: Boolean(options.webhookToken || process.env.FEISHU_CHANGE_WEBHOOK_TOKEN),
     pending: listJsonFiles(queueDir(rootDir, "pending")).length,
+    processing: countOutboxFiles(queueRoot(rootDir), "processing"),
     failed: listJsonFiles(queueDir(rootDir, "failed")).length,
     sent: listJsonFiles(queueDir(rootDir, "sent")).length,
+    lastHeartbeatAt: state.lastHeartbeatAt || null,
     lastSuccessAt: state.lastSuccessAt || null,
     lastErrorAt: state.lastErrorAt || null,
     lastError: state.lastError || null
@@ -295,6 +327,10 @@ export function toWebhookPayload(event) {
 
   return {
     schema_version: event.schema_version,
+    author_name: event.author_name || "",
+    author_email: event.author_email || "",
+    "\u4f5c\u8005": event.author_name || "",
+    "\u4f5c\u8005\u90ae\u7bb1": event.author_email || "",
     "修改记录": `[${event.source}] ${event.project} - ${titleSummary}`,
     "完成时间": event.completed_at,
     "工具": event.source,
@@ -332,7 +368,7 @@ export function captureWorktreeTree(repoRoot) {
     .update(`${repoRoot}\0${process.pid}\0${Date.now()}\0${Math.random()}`)
     .digest("hex")
     .slice(0, 16);
-  const indexPath = resolve(tmpdir(), `mi-notic-index-${token}`);
+  const indexPath = resolve(tmpdir(), `amber-index-${token}`);
   const env = { ...process.env, GIT_INDEX_FILE: indexPath };
 
   try {
@@ -445,6 +481,13 @@ function resolveTurnIdentity(input) {
 
 function normalizeSource(value) {
   return String(value || "").toLowerCase() === "cursor" ? "Cursor" : "ChatGPT";
+}
+
+function readGitAuthor(repoRoot) {
+  return {
+    authorName: runGit(repoRoot, ["config", "--get", "user.name"], { allowFailure: true }).stdout.trim(),
+    authorEmail: runGit(repoRoot, ["config", "--get", "user.email"], { allowFailure: true }).stdout.trim()
+  };
 }
 
 function extractPrompt(input) {
@@ -566,14 +609,22 @@ function queueDir(rootDir, name) {
   return resolve(changeRecordRoot(rootDir), "queue", name);
 }
 
+function queueRoot(rootDir) {
+  return resolve(changeRecordRoot(rootDir), "queue");
+}
+
 function queueFile(rootDir, name, eventId) {
   return resolve(queueDir(rootDir, name), `${safeFileName(eventId)}.json`);
 }
 
 function ensureQueueDirs(rootDir) {
-  for (const name of ["pending", "sent", "failed"]) {
-    mkdirSync(queueDir(rootDir, name), { recursive: true });
-  }
+  ensureOutboxDirs(queueRoot(rootDir));
+}
+
+function withoutClaim(envelope) {
+  const result = { ...envelope };
+  delete result.claimedAt;
+  return result;
 }
 
 function safeFileName(value) {

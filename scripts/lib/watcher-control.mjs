@@ -1,81 +1,84 @@
-import { existsSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
-const WATCH_SCRIPT = resolve(SCRIPT_DIR, "../watch-notifications.mjs");
+const STACK_SCRIPT = resolve(SCRIPT_DIR, "../start-watch-stack.mjs");
 
 export function getWatcherPaths(rootDir = process.cwd()) {
   const localDir = resolve(rootDir, ".local");
   return {
-    pidFile: resolve(localDir, "watch-toast.pid"),
-    logFile: resolve(localDir, "watch-toast.log")
+    pidFile: resolve(localDir, "watch-all.pid"),
+    healthPidFile: resolve(localDir, "health-monitor.pid"),
+    desiredFile: resolve(localDir, "runtime-desired.json"),
+    logFile: resolve(localDir, "watch-all.log")
   };
 }
 
 export function getWatcherStatus(rootDir = process.cwd()) {
-  const { pidFile, logFile } = getWatcherPaths(rootDir);
+  const { pidFile, healthPidFile, logFile } = getWatcherPaths(rootDir);
 
-  if (!existsSync(pidFile)) {
-    return { running: false, pid: null, logFile };
-  }
-
-  const pid = Number.parseInt(readFileSync(pidFile, "utf8").trim(), 10);
-  if (!Number.isFinite(pid) || pid <= 0) {
-    return { running: false, pid: null, logFile, stalePidFile: true };
-  }
-
+  const pid = Number.parseInt(readFileSafe(pidFile).trim(), 10);
+  const pidFilePresent = existsSync(pidFile);
   const alive = isProcessAlive(pid);
-  if (!alive) {
-    return { running: false, pid: null, logFile, stalePidFile: true };
-  }
-
-  return { running: true, pid, logFile };
+  const healthPid = Number.parseInt(readFileSafe(healthPidFile).trim(), 10);
+  const healthRunning = Number.isFinite(healthPid) && healthPid > 0 && isProcessAlive(healthPid);
+  return {
+    running: alive,
+    pid: alive ? pid : null,
+    healthRunning,
+    healthPid: healthRunning ? healthPid : null,
+    logFile,
+    stalePidFile: pidFilePresent && !alive
+  };
 }
 
 export function startWatcher(rootDir = process.cwd()) {
   const status = getWatcherStatus(rootDir);
-  if (status.running) {
+  if (status.running && status.healthRunning) {
     return { ok: true, alreadyRunning: true, pid: status.pid };
   }
 
   if (status.stalePidFile) {
-    cleanupPidFile(rootDir);
+    unlinkIfExists(getWatcherPaths(rootDir).pidFile);
   }
 
-  const { pidFile, logFile } = getWatcherPaths(rootDir);
+  const { logFile } = getWatcherPaths(rootDir);
   mkdirSync(dirname(logFile), { recursive: true });
-  mkdirSync(dirname(pidFile), { recursive: true });
-
-  const logFd = openSync(logFile, "a");
-  const child = spawn(process.execPath, [WATCH_SCRIPT], {
+  const child = spawn(process.execPath, [STACK_SCRIPT, "--background"], {
     cwd: rootDir,
     detached: true,
-    stdio: ["ignore", logFd, logFd],
+    stdio: "ignore",
     shell: false,
     windowsHide: true
   });
 
   child.unref();
-  writeFileSync(pidFile, `${child.pid}\n`, "utf8");
-  appendLog(logFile, `started pid=${child.pid}`);
+  appendLog(logFile, `started stack launcher pid=${child.pid}`);
 
-  return { ok: true, pid: child.pid };
+  return { ok: true, pid: child.pid, starting: true };
 }
 
 export function stopWatcher(rootDir = process.cwd()) {
   const status = getWatcherStatus(rootDir);
-  const { pidFile, logFile } = getWatcherPaths(rootDir);
+  const { pidFile, healthPidFile, desiredFile, logFile } = getWatcherPaths(rootDir);
 
-  if (!status.running) {
+  writeDesiredState(desiredFile, false);
+
+  if (!status.running && !status.healthRunning) {
     cleanupPidFile(rootDir);
     return { ok: true, alreadyStopped: true };
   }
 
-  killProcessTree(status.pid);
-  appendLog(logFile, `stopped pid=${status.pid}`);
-  cleanupPidFile(rootDir);
+  for (const pid of [status.pid, status.healthPid]) {
+    if (pid) {
+      killProcessTree(pid);
+      appendLog(logFile, `stopped pid=${pid}`);
+    }
+  }
+  unlinkIfExists(pidFile);
+  unlinkIfExists(healthPidFile);
 
   return { ok: true, pid: status.pid };
 }
@@ -102,6 +105,33 @@ function isProcessAlive(pid) {
   }
 }
 
+function readFileSafe(filePath) {
+  try {
+    return readFileSync(filePath, "utf8");
+  } catch {
+    return "";
+  }
+}
+
+function writeDesiredState(filePath, running) {
+  mkdirSync(dirname(filePath), { recursive: true });
+  let current = {};
+  try {
+    current = JSON.parse(readFileSync(filePath, "utf8"));
+  } catch {
+    // Start from an empty runtime state.
+  }
+  writeFileSync(filePath, `${JSON.stringify({ ...current, running, changedAt: new Date().toISOString(), consecutiveMisses: 0 }, null, 2)}\n`, "utf8");
+}
+
+function unlinkIfExists(filePath) {
+  try {
+    unlinkSync(filePath);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+}
+
 function killProcessTree(pid) {
   if (process.platform === "win32") {
     spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], {
@@ -119,10 +149,9 @@ function killProcessTree(pid) {
 }
 
 function cleanupPidFile(rootDir) {
-  const { pidFile } = getWatcherPaths(rootDir);
-  if (existsSync(pidFile)) {
-    unlinkSync(pidFile);
-  }
+  const { pidFile, healthPidFile } = getWatcherPaths(rootDir);
+  unlinkIfExists(pidFile);
+  unlinkIfExists(healthPidFile);
 }
 
 function appendLog(logFile, message) {

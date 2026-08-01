@@ -1,6 +1,6 @@
 # Cursor 集成
 
-mi-notic 不需要 Cursor 插件。推荐用 `watch:all` 同时监听系统 toast 和 AskQuestion/确认框 UI。
+Amber 不需要 Cursor 插件。推荐用 `watch:all` 同时监听系统 toast 和 AskQuestion/确认框 UI。
 
 ## 推荐：全量监听
 
@@ -12,7 +12,7 @@ mi-notic 不需要 Cursor 插件。推荐用 `watch:all` 同时监听系统 toas
    ```powershell
    npm run watch:all
    ```
-3. 或通过命令面板：`Tasks: Run Task` -> `mi-notic: watch all (toast + UI prompts)`
+3. 或通过命令面板：`Tasks: Run Task` -> `Amber: watch all (toast + UI prompts)`
 
 watcher 前台运行，在终端按 `Ctrl+C` 停止。
 
@@ -29,7 +29,7 @@ watcher 前台运行，在终端按 `Ctrl+C` 停止。
 
 1. **用户 Hook**（自动）：`C:\Users\hongliang.li\.cursor\hooks.json`  
    监听 `afterAgentResponse` / `stop`，调用 `scripts/hooks/on-cursor-event.mjs`  
-   调试日志：`d:\project\mi-notic\.local\cursor-hook.log`  
+   调试日志：`d:\project\Amber\.local\cursor-hook.log`  
    **修改 hooks 后需 Reload Cursor**
 
 2. **Cursor Rule**：Agent AskQuestion 前先 Shell 执行 `notify-ask.mjs`
@@ -75,13 +75,13 @@ npm run watch:ui-prompts
 打开 Cursor 命令面板，选择 `Tasks: Run Task`：
 
 ```text
-mi-notic: watch all (toast + UI prompts)
-mi-notic: watch Codex/Cursor notifications
-mi-notic: watch Codex/Cursor UI prompts
-mi-notic: test notification
-mi-notic: status done
-mi-notic: status wait
-mi-notic: run command with notification
+Amber: watch all (toast + UI prompts)
+Amber: watch Codex/Cursor notifications
+Amber: watch Codex/Cursor UI prompts
+Amber: test notification
+Amber: status done
+Amber: status wait
+Amber: run command with notification
 ```
 
 ## 手动用法

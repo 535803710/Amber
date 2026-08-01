@@ -20,7 +20,7 @@ function main() {
     return;
   }
 
-  console.log("启动 mi-notic 全量监听：系统通知 + 内部确认/提问 UI + 修改记录");
+  console.log("启动 Amber 全量监听：系统通知 + 内部确认/提问 UI + 修改记录");
   console.log("按 Ctrl+C 停止。");
 
   const children = [

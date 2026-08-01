@@ -7,7 +7,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$TaskName = "mi-notic-watch-all"
+$TaskName = "amber-watch-all"
+$LegacyTaskNames = @("mi-notic-watch-all")
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $StartScript = Join-Path $PSScriptRoot "start-watch-background.ps1"
 $StopScript = Join-Path $PSScriptRoot "stop-watch-background.ps1"
@@ -34,6 +35,30 @@ function Show-Status {
 
     if (-not $schtasksOk -and -not (Test-Path $ShortcutPath)) {
         Write-Host "Autostart not installed: $TaskName"
+    }
+
+    foreach ($legacyName in $LegacyTaskNames) {
+        $legacyShortcutPath = Join-Path $StartupFolder "$legacyName.lnk"
+        if (Test-Path $legacyShortcutPath) {
+            Write-Host "Legacy startup shortcut detected: $legacyShortcutPath"
+        }
+    }
+}
+
+function Remove-LegacyAutostart {
+    foreach ($legacyName in $LegacyTaskNames) {
+        $previousPreference = $ErrorActionPreference
+        $ErrorActionPreference = "SilentlyContinue"
+        cmd /c "schtasks /Delete /TN `"$legacyName`" /F" 2>$null | Out-Null
+        $ErrorActionPreference = $previousPreference
+
+        $legacyShortcutPath = Join-Path $StartupFolder "$legacyName.lnk"
+        if (Test-Path $legacyShortcutPath) {
+            $legacyShortcut = Get-Item -LiteralPath $legacyShortcutPath -ErrorAction Stop
+            $legacyShortcut.Attributes = [System.IO.FileAttributes]::Normal
+            Remove-Item -LiteralPath $legacyShortcutPath -Force -ErrorAction Stop
+            Write-Host "Removed legacy startup shortcut: $legacyName"
+        }
     }
 }
 
@@ -67,7 +92,7 @@ function Install-StartupShortcut {
     $shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$StartScript`""
     $shortcut.WorkingDirectory = $Root
     $shortcut.WindowStyle = 7
-    $shortcut.Description = "mi-notic watch:all background watcher"
+    $shortcut.Description = "Amber watch:all background watcher"
     $shortcut.Save()
 
     Set-Content -Path $MarkerPath -Value "startup-folder" -Encoding ASCII
@@ -91,6 +116,7 @@ if ($Status) {
 if ($Uninstall) {
     Remove-ScheduledTask
     Remove-StartupShortcut
+    Remove-LegacyAutostart
     if (Test-Path $MarkerPath) {
         Remove-Item -Path $MarkerPath -Force -ErrorAction SilentlyContinue
     }
@@ -102,6 +128,8 @@ if ($Uninstall) {
 if (-not (Test-Path $StartScript)) {
     throw "Missing script: $StartScript"
 }
+
+Remove-LegacyAutostart
 
 $installed = $false
 if (Install-ScheduledTask) {

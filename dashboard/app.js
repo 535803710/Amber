@@ -16,6 +16,10 @@ const els = {
   doneRuleDesc: document.getElementById("doneRuleDesc"),
   infoRuleTitle: document.getElementById("infoRuleTitle"),
   infoRuleDesc: document.getElementById("infoRuleDesc"),
+  healthAlertsTitle: document.getElementById("healthAlertsTitle"),
+  healthAlertsDesc: document.getElementById("healthAlertsDesc"),
+  brandKicker: document.getElementById("brandKicker"),
+  brandTitle: document.getElementById("brandTitle"),
   clearWebhookLabel: document.getElementById("clearWebhookLabel"),
   clearSecretLabel: document.getElementById("clearSecretLabel"),
   autostartLabel: document.getElementById("autostartLabel"),
@@ -29,6 +33,7 @@ const els = {
   notifyOnDone: document.getElementById("notifyOnDone"),
   notifyOnWait: document.getElementById("notifyOnWait"),
   notifyOnInfo: document.getElementById("notifyOnInfo"),
+  healthAlertsEnabled: document.getElementById("healthAlertsEnabled"),
   webhookUrl: document.getElementById("webhookUrl"),
   webhookSecret: document.getElementById("webhookSecret"),
   webhookMeta: document.getElementById("webhookMeta"),
@@ -63,7 +68,19 @@ const els = {
   commitRecordsPending: document.getElementById("commitRecordsPending"),
   commitRecordsFailed: document.getElementById("commitRecordsFailed"),
   commitLastScan: document.getElementById("commitLastScan"),
+  commitScanRoots: document.getElementById("commitScanRoots"),
+  commitScanRootsLabel: document.getElementById("commitScanRootsLabel"),
+  commitScanRootsHint: document.getElementById("commitScanRootsHint"),
+  commitScanRootsMeta: document.getElementById("commitScanRootsMeta"),
+  chooseCommitScanRootBtn: document.getElementById("chooseCommitScanRootBtn"),
+  saveCommitScanRootsBtn: document.getElementById("saveCommitScanRootsBtn"),
+  commitScanRootsMsg: document.getElementById("commitScanRootsMsg"),
   replayCommitRecordsBtn: document.getElementById("replayCommitRecordsBtn"),
+  healthTitle: document.getElementById("healthTitle"),
+  healthBadge: document.getElementById("healthBadge"),
+  healthComponents: document.getElementById("healthComponents"),
+  healthIssues: document.getElementById("healthIssues"),
+  healthCheckedAt: document.getElementById("healthCheckedAt"),
   startBtn: document.getElementById("startBtn"),
   stopBtn: document.getElementById("stopBtn"),
   saveSettingsBtn: document.getElementById("saveSettingsBtn"),
@@ -79,15 +96,17 @@ const els = {
   toast: document.getElementById("toast")
 };
 
-const THEME_KEY = "mi-notic-theme";
-const LANG_KEY = "mi-notic-lang";
+const THEME_KEY = "amber-theme";
+const LANG_KEY = "amber-lang";
 const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
 
 const I18N = {
   en: {
     htmlLang: "en",
-    documentTitle: "mi-notic console",
-    subtitle: "toast -> feishu",
+    documentTitle: "Amber 控制台",
+    subtitle: "Turn fleeting AI collaboration into durable engineering memory",
+    brandKicker: "AI collaboration memory",
+    brandTitle: "Amber",
     navDashboard: "dashboard",
     navChangeRecords: "AI changes",
     navCommitRecords: "Git commits",
@@ -106,7 +125,7 @@ const I18N = {
     rulesTitle: "rules",
     configTitle: "config",
     recordsTitle: "change records",
-    logTitle: "tail .local/watch-toast.log",
+    logTitle: "tail .local/watch-all.log",
     pidLabel: "pid",
     accessLabel: "access",
     webhookStateLabel: "webhook",
@@ -132,10 +151,16 @@ const I18N = {
     doneRuleDesc: "task complete",
     infoRuleTitle: "info",
     infoRuleDesc: "other toast",
+    healthAlertsTitle: "collection alerts",
+    healthAlertsDesc: "send Feishu alerts for collection issues",
     rulesSave: "rules save",
     saveBusy: "saving...",
     rulesSaved: "rules saved",
     settingsSavedDetail: "saved. new Windows toast only.",
+    healthReset: "archive stale",
+    healthResetBusy: "archiving...",
+    healthResetDone: (count) => `archived ${count} stale baseline(s)`,
+    healthResetConfirm: (source) => `Archive stale ${source} baselines? This will not delete sent records or Git history.`,
     noRecord: "no record",
     statusLabel: "status",
     timeLabel: "time",
@@ -169,7 +194,7 @@ const I18N = {
     autostartDisabledToast: "autostart disabled",
     autostartEnabledDetail: "autostart enabled.",
     autostartDisabledDetail: "autostart disabled.",
-    logEmpty: "no log. watcher writes to .local/watch-toast.log.",
+    logEmpty: "no log. the watch stack writes to .local/watch-all.log.",
     webhookSet: "set",
     webhookUnset: "unset",
     recordsPending: "pending",
@@ -186,12 +211,44 @@ const I18N = {
     recordsTokenUnset: "token: unset",
     recordsSaved: "change record config saved",
     recordsReplayed: (count) => `${count} failed event(s) replayed`,
+    healthTitle: "collection health",
+    healthHealthy: "healthy",
+    healthWarning: "warning",
+    healthCritical: "critical",
+    healthDisabled: "disabled",
+    healthCheckedAt: (value) => `checked: ${value}`,
+    healthNoIssues: "no active issues",
+    healthRuntime: "runtime",
+    healthCursor: "Cursor Hook",
+    healthChatgpt: "ChatGPT Hook",
+    healthGitScan: "Git scan",
+    healthAiDelivery: "AI delivery",
+    healthGitDelivery: "Git delivery",
+    healthAlertChannel: "alert channel",
+    healthAlertsOff: "alerts off",
+    healthUnknown: "unknown",
+    healthOn: "on",
+    healthOff: "off",
+    commitScanRootsLabel: "scan roots (one absolute path per line)",
+    commitScanRootsHint: "Git commits are discovered from configured roots; project hooks are not modified.",
+    commitScanRootsPlaceholder: "D:/project",
+    commitScanRootsCurrent: (value) => `current: ${value}`,
+    commitScanRootsUnset: "current: unset",
+    commitScanRootsSave: "save scan roots",
+    commitScanRootsSaved: "Git scan roots saved",
+    chooseCommitScanRoot: "choose folder",
+    chooseCommitScanRootBusy: "opening...",
+    chooseCommitScanRootAdded: "folder added; save to apply",
+    commitScanRootsConfigured: "configured",
+    commitScanRootsUnconfigured: "scan not configured",
     requestFailed: (status) => `Request failed (${status})`
   },
   zh: {
     htmlLang: "zh-CN",
-    documentTitle: "mi-notic 控制台",
-    subtitle: "toast -> 飞书",
+    documentTitle: "Amber 控制台",
+    subtitle: "将转瞬即逝的 AI 协作，沉淀为可持续使用的研发记忆",
+    brandKicker: "AI 协作研发记忆",
+    brandTitle: "琥珀计划",
     navDashboard: "控制台",
     navChangeRecords: "AI 修改记录",
     navCommitRecords: "Git 提交记录",
@@ -208,9 +265,9 @@ const I18N = {
     watcherTitle: "监听器",
     lastTitle: "最近通知",
     rulesTitle: "通知规则",
-    configTitle: "连接配置",
+    configTitle: "通知链接配置",
     recordsTitle: "修改记录",
-    logTitle: "tail .local/watch-toast.log",
+    logTitle: "tail .local/watch-all.log",
     pidLabel: "进程",
     accessLabel: "权限",
     webhookStateLabel: "webhook",
@@ -236,10 +293,16 @@ const I18N = {
     doneRuleDesc: "任务完成",
     infoRuleTitle: "info",
     infoRuleDesc: "其他提示",
+    healthAlertsTitle: "采集异常告警",
+    healthAlertsDesc: "异常时发送飞书提醒",
     rulesSave: "保存规则",
     saveBusy: "保存中...",
     rulesSaved: "规则已保存",
     settingsSavedDetail: "已保存，只影响之后出现的 Windows toast。",
+    healthReset: "归档残留",
+    healthResetBusy: "归档中...",
+    healthResetDone: (count) => `已归档 ${count} 条残留 baseline`,
+    healthResetConfirm: (source) => `确认归档 ${source} 的残留 baseline？不会删除已发送记录或 Git 历史。`,
     noRecord: "暂无记录",
     statusLabel: "状态",
     timeLabel: "时间",
@@ -273,7 +336,7 @@ const I18N = {
     autostartDisabledToast: "自启动已关闭",
     autostartEnabledDetail: "自启动已开启。",
     autostartDisabledDetail: "自启动已关闭。",
-    logEmpty: "暂无日志。监听器会写入 .local/watch-toast.log。",
+    logEmpty: "暂无日志。监听进程组会写入 .local/watch-all.log。",
     webhookSet: "已配置",
     webhookUnset: "未配置",
     recordsPending: "待发送",
@@ -290,6 +353,36 @@ const I18N = {
     recordsTokenUnset: "token：未配置",
     recordsSaved: "修改记录配置已保存",
     recordsReplayed: (count) => `已重放 ${count} 条失败记录`,
+    healthTitle: "采集健康",
+    healthHealthy: "正常",
+    healthWarning: "警告",
+    healthCritical: "严重",
+    healthDisabled: "未启用",
+    healthCheckedAt: (value) => `检查时间：${value}`,
+    healthNoIssues: "暂无异常",
+    healthRuntime: "运行进程",
+    healthCursor: "Cursor Hook",
+    healthChatgpt: "ChatGPT Hook",
+    healthGitScan: "Git 扫描",
+    healthAiDelivery: "AI 投递",
+    healthGitDelivery: "Git 投递",
+    healthAlertChannel: "告警通道",
+    healthAlertsOff: "告警已关闭",
+    healthUnknown: "未知",
+    healthOn: "已运行",
+    healthOff: "未运行",
+    commitScanRootsLabel: "扫描目录（每行一个绝对路径）",
+    commitScanRootsHint: "配置目录后自动发现 Git 提交；不修改项目 Hook。",
+    commitScanRootsPlaceholder: "D:/project",
+    commitScanRootsCurrent: (value) => `当前：${value}`,
+    commitScanRootsUnset: "当前：未配置",
+    commitScanRootsSave: "保存扫描范围",
+    commitScanRootsSaved: "Git 扫描范围已保存",
+    chooseCommitScanRoot: "选择文件夹",
+    chooseCommitScanRootBusy: "打开中...",
+    chooseCommitScanRootAdded: "目录已添加，请保存后生效",
+    commitScanRootsConfigured: "已配置",
+    commitScanRootsUnconfigured: "待配置",
     requestFailed: (status) => `请求失败 (${status})`
   }
 };
@@ -317,6 +410,7 @@ const STATUS_LABELS = {
 
 let toastTimer = null;
 let latestState = null;
+let choosingCommitScanRoot = false;
 let currentLanguage = resolveLanguage();
 
 function getStoredTheme() {
@@ -375,6 +469,8 @@ function applyLanguage(language, { persist = false } = {}) {
   document.documentElement.lang = t("htmlLang");
   document.title = t("documentTitle");
   setText(els.subtitle, "subtitle");
+  setText(els.brandKicker, "brandKicker");
+  setText(els.brandTitle, "brandTitle");
   setText(els.navDashboard, "navDashboard");
   setText(els.navChangeRecords, "navChangeRecords");
   setText(els.navCommitRecords, "navCommitRecords");
@@ -390,6 +486,7 @@ function applyLanguage(language, { persist = false } = {}) {
   setCommandTitle(els.rulesTitle, "rulesTitle");
   setCommandTitle(els.configTitle, "configTitle");
   setCommandTitle(els.recordsTitle, "recordsTitle");
+  setCommandTitle(els.healthTitle, "healthTitle");
   setCommandTitle(els.logTitle, "logTitle");
   setText(els.pidLabel, "pidLabel");
   setText(els.accessLabel, "accessLabel");
@@ -402,6 +499,11 @@ function applyLanguage(language, { persist = false } = {}) {
   setText(els.saveRecordsBtn, "recordsSave");
   setText(els.replayRecordsBtn, "recordsRetry");
   setText(els.openBaseLink, "recordsOpen");
+  setText(els.commitScanRootsLabel, "commitScanRootsLabel");
+  setText(els.commitScanRootsHint, "commitScanRootsHint");
+  setText(els.chooseCommitScanRootBtn, "chooseCommitScanRoot");
+  setText(els.saveCommitScanRootsBtn, "commitScanRootsSave");
+  els.commitScanRoots.placeholder = t("commitScanRootsPlaceholder");
   setText(els.rulesHint, "rulesHint");
   setText(els.waitRuleTitle, "waitRuleTitle");
   setText(els.waitRuleDesc, "waitRuleDesc");
@@ -409,6 +511,8 @@ function applyLanguage(language, { persist = false } = {}) {
   setText(els.doneRuleDesc, "doneRuleDesc");
   setText(els.infoRuleTitle, "infoRuleTitle");
   setText(els.infoRuleDesc, "infoRuleDesc");
+  setText(els.healthAlertsTitle, "healthAlertsTitle");
+  setText(els.healthAlertsDesc, "healthAlertsDesc");
   setText(els.saveSettingsBtn, "rulesSave");
   setText(els.clearWebhookLabel, "clearWebhook");
   setText(els.clearSecretLabel, "clearSecret");
@@ -510,6 +614,7 @@ function renderState(state) {
   renderFeishuState(state.feishu || { configured: state.feishuConfigured });
   renderChangeRecords(state.changeRecords || {});
   renderCommitRecords(state.commitRecords || {});
+  renderHealth(state.health || {});
   renderAutostartState(state.autostart);
 
   els.accessHint.textContent = accessOk
@@ -524,6 +629,7 @@ function renderState(state) {
   els.notifyOnDone.checked = state.settings.notifyOnDone;
   els.notifyOnWait.checked = state.settings.notifyOnWait;
   els.notifyOnInfo.checked = state.settings.notifyOnInfo;
+  els.healthAlertsEnabled.checked = state.settings.healthAlertsEnabled !== false;
 
   renderLastStatus(state.lastStatus);
 
@@ -550,13 +656,116 @@ function renderChangeRecords(records) {
 }
 
 function renderCommitRecords(records) {
-  const configured = Boolean(records.configured);
-  els.commitRecordsBadge.textContent = configured ? "已配置" : "未配置";
+  const configured = Boolean(records.scanConfigured);
+  els.commitRecordsBadge.textContent = configured ? t("commitScanRootsConfigured") : t("commitScanRootsUnconfigured");
   els.commitRecordsBadge.className = `badge ${configured ? "on" : "off"}`;
   els.commitRepositoryCount.textContent = String(records.repositoryCount ?? 0);
   els.commitRecordsPending.textContent = String(records.pending ?? 0);
   els.commitRecordsFailed.textContent = String(records.failed ?? 0);
   els.commitLastScan.textContent = formatTime(records.lastScanAt);
+  const roots = records.scanRoots || [];
+  if (!choosingCommitScanRoot && document.activeElement !== els.commitScanRoots) {
+    els.commitScanRoots.value = roots.join("\n");
+  }
+  els.commitScanRootsMeta.textContent = roots.length
+    ? t("commitScanRootsCurrent", roots.join("; "))
+    : t("commitScanRootsUnset");
+}
+
+function renderHealth(health) {
+  const labels = {
+    runtime: "healthRuntime",
+    cursor: "healthCursor",
+    chatgpt: "healthChatgpt",
+    gitScan: "healthGitScan",
+    aiDelivery: "healthAiDelivery",
+    gitDelivery: "healthGitDelivery",
+    alertChannel: "healthAlertChannel"
+  };
+  const statusLabels = {
+    healthy: "healthHealthy",
+    warning: "healthWarning",
+    critical: "healthCritical",
+    disabled: "healthDisabled"
+  };
+  const status = health.status || "disabled";
+  els.healthBadge.textContent = t(statusLabels[status] || "healthUnknown");
+  els.healthBadge.className = `badge health-${status}`;
+  els.healthComponents.replaceChildren();
+  for (const [key, labelKey] of Object.entries(labels)) {
+    const component = health.components?.[key] || { status: "disabled", details: {} };
+    const item = document.createElement("div");
+    item.className = `health-item health-${component.status || "disabled"}`;
+    const title = document.createElement("strong");
+    title.textContent = t(labelKey);
+    const state = document.createElement("span");
+    state.textContent = t(statusLabels[component.status] || "healthUnknown");
+    const detail = document.createElement("small");
+    detail.textContent = healthDetail(key, component.details || {});
+    item.append(title, state, detail);
+    els.healthComponents.append(item);
+  }
+
+  els.healthIssues.replaceChildren();
+  if (!health.issues?.length) {
+    const empty = document.createElement("p");
+    empty.className = "health-empty";
+    empty.textContent = t("healthNoIssues");
+    els.healthIssues.append(empty);
+  } else {
+    for (const issue of health.issues) {
+      const item = document.createElement("div");
+      item.className = `health-issue ${issue.severity || "warning"}`;
+      const message = createTextBlock(
+        "span",
+        "health-issue-message",
+        `${issue.severity === "critical" ? "!" : "i"} ${issue.message}`
+      );
+      item.append(message);
+      if (issue.id?.endsWith("_baseline_stale")) {
+        const resetButton = createTextBlock("button", "btn btn-ghost btn-small", t("healthReset"));
+        resetButton.type = "button";
+        resetButton.addEventListener("click", () => {
+          const source = issue.component === "chatgpt" ? "ChatGPT" : "Cursor";
+          if (!window.confirm(t("healthResetConfirm", source))) return;
+          runAction(
+            resetButton,
+            t("healthResetBusy"),
+            (result) => t("healthResetDone", result?.archivedCount || 0),
+            async () => {
+              return api("/api/health/reset", {
+                method: "POST",
+                body: JSON.stringify({ source: issue.component })
+              });
+            }
+          );
+        });
+        item.append(resetButton);
+      }
+      els.healthIssues.append(item);
+    }
+  }
+  els.healthCheckedAt.textContent = t("healthCheckedAt", formatTime(health.checkedAt));
+}
+
+function healthDetail(key, details) {
+  if (key === "runtime") {
+    const watcher = details.running ? `watch pid ${details.pid || "-"}` : t("stopped");
+    return `${watcher} · health ${details.healthRunning ? t("healthOn") : t("healthOff")}`;
+  }
+  if (key === "cursor" || key === "chatgpt") {
+    return `${details.activeBaselines || 0} baseline · ${formatTime(details.lastCompleteAt || details.lastBeginAt)}`;
+  }
+  if (key === "gitScan") {
+    return `${details.repositoryCount || 0} repos · ${formatTime(details.lastScanAt)}`;
+  }
+  if (key === "alertChannel") {
+    if (details.enabled === false) return t("healthAlertsOff");
+    return details.configured ? t("webhookSet") : t("webhookUnset");
+  }
+  const queue = `pending ${details.pending || 0} · processing ${details.processing || 0} · failed ${details.failed || 0}`;
+  const oldest = details.oldestPendingAt || details.oldestProcessingAt;
+  return oldest ? `${queue} · ${formatTime(oldest)}` : queue;
 }
 
 function renderFeishuState(feishu) {
@@ -647,7 +856,8 @@ async function saveSettings() {
   const payload = {
     notifyOnDone: els.notifyOnDone.checked,
     notifyOnWait: els.notifyOnWait.checked,
-    notifyOnInfo: els.notifyOnInfo.checked
+    notifyOnInfo: els.notifyOnInfo.checked,
+    healthAlertsEnabled: els.healthAlertsEnabled.checked
   };
   await api("/api/settings", {
     method: "POST",
@@ -727,6 +937,39 @@ async function saveChangeRecordSettings() {
   els.recordsMsg.textContent = t("recordsSaved");
 }
 
+async function saveCommitScanRoots() {
+  const scanRoots = els.commitScanRoots.value
+    .split(/\r?\n/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+  await api("/api/commit-record-settings", {
+    method: "POST",
+    body: JSON.stringify({ scanRoots })
+  });
+  els.commitScanRootsMsg.textContent = t("commitScanRootsSaved");
+}
+
+async function chooseCommitScanRoot() {
+  const roots = els.commitScanRoots.value
+    .split(/\r?\n/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+  choosingCommitScanRoot = true;
+  try {
+    const result = await api("/api/choose-folder", { method: "POST" });
+    if (!result.path) return;
+
+    const key = result.path.toLowerCase();
+    if (!roots.some((root) => root.toLowerCase() === key)) {
+      roots.push(result.path);
+      els.commitScanRoots.value = roots.join("\n");
+      els.commitScanRootsMsg.textContent = t("chooseCommitScanRootAdded");
+    }
+  } finally {
+    choosingCommitScanRoot = false;
+  }
+}
+
 els.startBtn.addEventListener("click", async () => {
   await runAction(els.startBtn, t("watcherStartBusy"), t("watcherStarted"), () =>
     api("/api/watcher/start", { method: "POST" })
@@ -771,6 +1014,15 @@ els.replayCommitRecordsBtn.addEventListener("click", () => {
   });
 });
 
+els.saveCommitScanRootsBtn.addEventListener("click", () => {
+  runAction(els.saveCommitScanRootsBtn, t("saveBusy"), t("commitScanRootsSaved"), saveCommitScanRoots);
+});
+
+els.chooseCommitScanRootBtn.addEventListener("click", () => {
+  withBusy(els.chooseCommitScanRootBtn, t("chooseCommitScanRootBusy"), chooseCommitScanRoot)
+    .catch((error) => showToast(error.message, "error"));
+});
+
 els.toggleAutostartBtn.addEventListener("click", () => {
   const enabling = !latestState?.autostart?.installed;
   runAction(
@@ -799,8 +1051,8 @@ els.clearRecordsToken.addEventListener("change", syncClearControls);
 
 async function runAction(button, busyText, successMessage, action) {
   try {
-    await withBusy(button, busyText, action);
-    showToast(successMessage, "success");
+    const result = await withBusy(button, busyText, action);
+    showToast(typeof successMessage === "function" ? successMessage(result) : successMessage, "success");
   } catch (error) {
     showToast(error.message, "error");
   } finally {

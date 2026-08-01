@@ -1,5 +1,5 @@
 {
-  "name": "mi-notic",
+  "name": "amber",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -13,7 +13,9 @@
     "check:status": "node scripts/check-status.mjs",
     "watch:notifications": "node scripts/watch-notifications.mjs",
     "watch:ui-prompts": "node scripts/watch-ui-prompts.mjs",
-    "watch:all": "node scripts/watch-all.mjs",
+    "watch:all": "node scripts/start-watch-stack.mjs",
+    "health:status": "node scripts/health-monitor-worker.mjs --status",
+    "health:once": "node scripts/health-monitor-worker.mjs --once",
     "records:worker": "node scripts/change-record-worker.mjs",
     "records:status": "node scripts/change-record-worker.mjs --status",
     "records:dry-run": "node scripts/change-record-worker.mjs --once --dry-run",

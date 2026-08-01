@@ -4,7 +4,7 @@ setlocal EnableExtensions
 chcp 65001 >nul 2>nul
 
 set "ROOT=%~dp0"
-set "PORT=%MI_NOTIC_DASHBOARD_PORT%"
+set "PORT=%AMBER_DASHBOARD_PORT%"
 if "%PORT%"=="" set "PORT=3847"
 set "URL=http://127.0.0.1:%PORT%"
 set "NODE_EXE="
@@ -25,7 +25,7 @@ goto dispatch
 :menu
 cls
 echo.
-echo  mi-notic control
+echo  Amber control
 echo  ----------------------------------------
 echo  [1] Open browser dashboard
 echo  [2] Start background watch:all
@@ -108,16 +108,16 @@ goto after_action
 
 :help
 echo Usage:
-echo   mi-notic.bat
-echo   mi-notic.bat open       Open dashboard and browser config
-echo   mi-notic.bat start      Start watch:all in background
-echo   mi-notic.bat stop       Stop watch:all
-echo   mi-notic.bat test       Send a test notification
-echo   mi-notic.bat edit       Edit .env.local
-echo   mi-notic.bat status     Print dashboard, watcher and last status
+echo   amber.bat
+echo   amber.bat open       Open dashboard and browser config
+echo   amber.bat start      Start watch:all in background
+echo   amber.bat stop       Stop watch:all
+echo   amber.bat test       Send a test notification
+echo   amber.bat edit       Edit .env.local
+echo   amber.bat status     Print dashboard, watcher and last status
 echo.
 echo Env:
-echo   MI_NOTIC_DASHBOARD_PORT Override dashboard port, default 3847
+echo   AMBER_DASHBOARD_PORT Override dashboard port, default 3847
 goto after_action
 
 :after_action

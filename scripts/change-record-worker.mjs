@@ -7,6 +7,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   getChangeRecordStatus,
+  claimReadyQueueItems,
   listReadyQueueItems,
   markQueueItemFailed,
   markQueueItemSent,
@@ -66,16 +67,24 @@ export async function processReadyItems({
   webhookToken = process.env.FEISHU_CHANGE_WEBHOOK_TOKEN?.trim() || "",
   requestTimeoutMs = REQUEST_TIMEOUT_MS
 } = {}) {
-  const items = listReadyQueueItems({ rootDir });
+  if (!dryRun) {
+    writeWorkerState({ lastHeartbeatAt: new Date().toISOString() }, { rootDir });
+  }
 
   if (dryRun) {
+    const items = listReadyQueueItems({ rootDir });
     for (const item of items) {
       console.log(JSON.stringify(toWebhookPayload(item.envelope.event), null, 2));
     }
     return;
   }
 
-  if (!webhookUrl || items.length === 0) {
+  if (!webhookUrl) {
+    return;
+  }
+
+  const items = claimReadyQueueItems({ rootDir });
+  if (items.length === 0) {
     return;
   }
 

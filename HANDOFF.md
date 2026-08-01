@@ -1,254 +1,111 @@
-# mi-notic 当前改动交接
+# Amber 当前工作区交接
 
-更新时间：2026-07-30
+更新时间：2026-08-01
+当前分支：`feature/record-history-pages`
+当前 HEAD：`66d5887 docs: 添加 2026-08-01 更新说明，记录 AI 修改和 Git 提交功能`
 
-当前分支：`vscode`
+## 一句话概览
 
-基准提交：`164e9df docs(README): 更新文档添加项目效果图片和GitHub链接`
+当前工作区正在把 Amber 从“Windows 通知转发器”扩展为“AI 修改记录 + Git 提交记录 + 本地可靠投递 + 健康监控 + 查询控制台”的完整链路。改动尚未提交。
 
-## 项目目标
+## 当前代码结构
 
-在保留原有飞书群通知的基础上，新增两条本地记录链路：
+- `scripts/hooks/`：接收 Cursor / Codex 事件，建立 AI 修改轮次 baseline，并在结束时生成变更记录。
+- `scripts/lib/change-records.mjs`：AI 修改事件、字段映射、事件去重和本地 outbox。
+- `scripts/lib/commit-records.mjs`：扫描配置目录下的本地 Git 仓库、建立分支基线、识别新 commit，并关联近 7 天内相同文件的 AI 事件。
+- `scripts/commit-record-scanner.mjs`：独立 Git 扫描入口；未配置 `COMMIT_RECORD_SCAN_ROOTS` 时不扫描。
+- `scripts/*-record-worker.mjs`：分别投递 AI 修改记录和 Git 提交记录，支持状态查询、dry-run、失败重放。
+- `scripts/lib/file-outbox.mjs`：`pending -> processing -> sent/failed` 的原子抢占、超时恢复和 JSON 原子写入。
+- `scripts/lib/health*.mjs`、`scripts/health-monitor-worker.mjs`：运行进程、Hook、baseline、队列、Git 扫描和 Webhook 健康检查，并处理告警/恢复。
+- `scripts/start-watch-stack.mjs`：统一启动 toast、UI prompt、AI 修改记录、Git 扫描和健康监控。
+- `scripts/dashboard-server.mjs`：控制台 API、配置保存、监听器启停、记录查询、失败重放、健康状态和 baseline 归档。
+- `dashboard/`：控制台首页、AI 修改记录页、Git 提交记录页；支持中英文、主题切换和只读分页展示。
+- `test/`：AI 修改、Git 扫描、outbox 并发抢占、健康监控、记录列表等测试。
 
-1. Cursor / ChatGPT 每轮实际文件修改写入飞书多维表格。
-2. `D:/project` 下 Git 仓库产生本地 commit 后写入另一张飞书多维表格。
+## 当前 Git 工作区改动
 
-## 当前 Git 工作区
+### 已修改
 
-已修改但未提交：
+- 配置与入口：`.env.example`、`package.json`、`README.md`、`计划.md`、`docs/cursor.md`、`docs/更新说明-2026-08-01.md`、`.vscode/tasks.json`。
+- 控制台：`dashboard/app.css`、`dashboard/app.js`、`dashboard/index.html`、`dashboard/records.js`、`dashboard/change-records.html`、`dashboard/commit-records.html`。
+- 监听与投递：`scripts/change-record-worker.mjs`、`scripts/commit-record-worker.mjs`、`scripts/dashboard-server.mjs`、`scripts/watch-all.mjs`、`scripts/start-watch-background.ps1`、`scripts/stop-watch-background.ps1`、`scripts/install-autostart.ps1`。
+- Hook 与通知：`scripts/hooks/on-change-event.mjs`、`scripts/hooks/on-cursor-event.mjs`、`scripts/notify-ask.mjs`、`scripts/notify-format.mjs`、`scripts/notify.mjs`。
+- 核心库与测试：`scripts/lib/change-records.mjs`、`scripts/lib/commit-records.mjs`、`scripts/lib/record-listing.mjs`、`scripts/lib/settings.mjs`、`scripts/lib/watcher-control.mjs`、`test/change-records.test.mjs`、`test/record-listing.test.mjs`。
+- 本文件：`HANDOFF.md`。
 
-- `.env.example`
-- `README.md`
-- `dashboard/app.js`
-- `dashboard/index.html`
-- `package.json`
-- `scripts/dashboard-server.mjs`
-- `scripts/notify-format.mjs`
-- `scripts/watch-all.mjs`
-- `scripts/watch-notifications.mjs`
-- `scripts/watch-ui-prompts.mjs`
-- `scripts/windows-ui-prompt-listener.ps1`
+### 已删除
 
-新增但未跟踪：
+- `.cursor/rules/mi-notic-askquestion.mdc`
+- `mi-notic.bat`
 
-- `scripts/change-record-worker.mjs`
-- `scripts/commit-record-worker.mjs`
-- `scripts/hooks/on-change-event.mjs`
-- `scripts/hooks/on-codex-event.mjs`
-- `scripts/lib/change-records.mjs`
-- `scripts/lib/commit-records.mjs`
-- `test/change-records.test.mjs`
-- `HANDOFF.md`
+### 未跟踪
 
-现有已跟踪文件差异约为 `299 additions / 13 deletions`，不包含上述新增文件。
+- `.cursor/rules/amber-askquestion.mdc`
+- `amber.bat`
+- `amber-author-test.txt`、`amber-hook-test.txt`
+- `docs/琥珀计划.md`
+- `scripts/commit-record-scanner.mjs`
+- `scripts/health-monitor-worker.mjs`
+- `scripts/start-watch-stack.mjs`
+- `scripts/lib/file-outbox.mjs`、`scripts/lib/health-alerts.mjs`、`scripts/lib/health-reset.mjs`、`scripts/lib/health.mjs`
+- `test/health.test.mjs`、`test/smoke-marker.txt`
 
-## AI 修改记录
+`amber-*.txt` 和 `test/smoke-marker.txt` 看起来是验证产生的临时标记，提交前需要确认是否保留。旧的 `mi-notic` 文件删除与 `amber` 重命名需要一起检查，避免遗留旧入口或破坏用户已有快捷方式。
 
-主要实现：
+## 已实现的行为
 
-- 任务开始时用临时 Git index 生成工作区基线 tree。
-- 任务结束时生成结果 tree，并比较两棵 tree。
-- 支持新增、修改、删除、重命名、暂存和未跟踪文件。
-- 仅有实际文件变化时生成事件。
-- 不保存完整 diff 或源码。
-- 事件写入本地 pending 队列，由 worker 投递。
-- 支持超时重试、失败队列、幂等事件 ID、dry-run 和失败重放。
-- 仪表盘展示配置状态、最近成功时间、pending / failed 数量和重放入口。
+1. AI 修改记录：任务开始保存临时 Git index baseline，任务结束比较 tree；只在实际文件变化时入队，覆盖新增、修改、删除、重命名、暂存和未跟踪文件。
+2. Git 提交记录：只扫描 `COMMIT_RECORD_SCAN_ROOTS` 指定目录内、最大深度 5 的本地 Git 仓库；首次发现只建立基线，后续新本地 `git commit` 才产生事件，不监听 `push`。
+3. 两条链路使用独立队列和 Webhook 配置，均支持 Bearer token、失败重试、失败重放、dry-run 和状态查询。
+4. outbox 使用原子 rename 抢占 `pending` 项，支持 `processing` 租约超时恢复，已覆盖双 worker 并发不重复投递的测试。
+5. 健康监控检查监听进程、Hook、残留 baseline、投递队列、Git 扫描延迟和仓库错误；控制台可归档残留 baseline，但不会删除已发送记录或 Git 历史。
+6. 控制台提供首页状态、AI 修改记录页、Git 提交记录页、状态筛选/分页、主题切换、中英文切换和监听器启停。
+7. Windows 自启动脚本已切换到 Amber 命名，并兼容清理旧的 `mi-notic` 任务/快捷方式。
 
-相关文件：
+## 配置边界
 
-- `scripts/lib/change-records.mjs`
-- `scripts/change-record-worker.mjs`
-- `scripts/hooks/on-change-event.mjs`
-- `test/change-records.test.mjs`
+敏感配置只放在本地 `.env.local`，不要提交：
 
-AI 修改记录的 Webhook URL 和 Bearer Token 已配置在 `.env.local`，不要写入 Git。
+- `FEISHU_WEBHOOK_URL`：普通通知。
+- `FEISHU_CHANGE_WEBHOOK_URL` / `FEISHU_CHANGE_WEBHOOK_TOKEN`：AI 修改记录。
+- `FEISHU_COMMIT_WEBHOOK_URL` / `FEISHU_COMMIT_WEBHOOK_TOKEN`：Git 提交记录。
+- `COMMIT_RECORD_SCAN_ROOTS`：分号分隔的绝对扫描目录；未配置时 Git 扫描关闭。
+- `AMBER_HEALTH_*`：健康检查间隔、阈值和告警重复周期。
 
-当前状态：
-
-```text
-configured: true
-tokenConfigured: true
-pending: 0
-failed: 0
-sent: 9
-```
-
-### Cursor
-
-用户级配置位于：
-
-```text
-C:\Users\hongliang.li\.cursor\hooks.json
-```
-
-已接入：
-
-- `beforeSubmitPrompt`：建立基线。
-- `afterAgentResponse`：缓存回复。
-- `stop`：完成比较并入队。
-
-Cursor 真实修改记录已成功投递。
-
-### ChatGPT / Codex
-
-用户级配置位于：
-
-```text
-C:\Users\hongliang.li\.codex\hooks.json
-```
-
-配置了 `UserPromptSubmit` 和 `Stop`，但当前 ChatGPT 桌面会话没有执行这两个 Hook。本地 `change-records.log` 没有本次会话的 begin / complete 记录。
-
-当前已确认：
-
-- 新增、修改、删除文件均可被采集器正确识别。
-- Webhook 投递正常。
-- ChatGPT 模拟事件已成功写入飞书。
-- 问题位于 ChatGPT 桌面端没有自动调用 Hook，而不是新文件、Git 比对或飞书工作流。
-- `/hooks` 是 Codex CLI 命令，当前桌面版输入框不提供该命令。
-
-需要继续确认：如何让桌面版加载并信任 `~/.codex/hooks.json`；可先在 Codex CLI 中运行 `/hooks` 完成审核，然后重启桌面版、新建任务验收。
-
-## Git 提交记录
-
-主要实现：
-
-- 每 5 秒扫描一次 `D:/project`。
-- 自动发现最大深度 5 内的 Git 仓库。
-- 比较本地 `refs/heads/*`，发现新 commit 后生成事件。
-- 采集仓库、远端地址、分支、父提交、提交类型、作者、标题、说明、文件和增删行。
-- 可关联最近 7 天涉及相同文件的 AI 修改事件。
-- 使用独立本地队列、重试和失败重放。
-
-相关文件：
-
-- `scripts/lib/commit-records.mjs`
-- `scripts/commit-record-worker.mjs`
-- `scripts/watch-all.mjs`
-
-Git 提交记录的 Webhook URL 已配置在 `.env.local`；飞书端未开启 Bearer Token。
-
-当前状态：
-
-```text
-configured: true
-repositoryCount: 27
-pending: 0
-failed: 0
-sent: 1
-```
-
-该 Webhook 已在本次交接前配置并重启后台监听，积压提交已成功补发。
-
-监听的是本地 commit，不是 push：
-
-```text
-修改文件 → git commit → 最多约 5 秒后采集
-                    ↓
-                  git push 不会再生成第二条
-```
-
-## 飞书字段映射
-
-### AI 修改记录
-
-使用 `scripts/lib/change-records.mjs` 的 `toWebhookPayload()` 输出，字段为中文名称，例如：
-
-- `事件 ID`
-- `工具`
-- `项目`
-- `仓库路径`
-- `分支`
-- `HEAD 提交`
-- `用户需求`
-- `修改结果`
-- `修改文件`
-- `文件数`
-- `新增行`
-- `删除行`
-- `结果状态`
-- `采集质量`
-- `会话 ID`
-- `轮次 ID`
-- `完成时间`
-
-### Git 提交记录
-
-| 飞书字段 | Webhook 字段 |
-| --- | --- |
-| 事件 ID | `event_id` |
-| 项目 | `project` |
-| 仓库路径 | `repo_path` |
-| 远端地址 | `remote_url` |
-| 分支 | `branch` |
-| 父提交 | `parent_shas` |
-| 提交类型 | `commit_kind` |
-| 引用变化 | `ref_update_type` |
-| 作者 | `author_name` |
-| 提交标题 | `commit_subject` |
-| 提交说明 | `commit_message` |
-| 修改文件 | `changed_files` |
-| 文件数 | `changed_file_count` |
-| 新增行 | `additions` |
-| 删除行 | `deletions` |
-| 检测时间 | `detected_at` |
-| 提交时间 | `committed_at` |
-| 提交 SHA | `commit_sha` |
-| 短 SHA | `short_sha` |
-| 关联 AI 事件 ID | `related_ai_event_ids` |
-
-## 已知问题
-
-### 1. 多 worker 会重复投递
-
-测试删除文件时，后台常驻 `change-record-worker.mjs` 与手动执行的 `--once` worker 同时读取到同一个 pending 事件，导致飞书收到两次相同 `event_id`。
-
-根因：当前发送流程是“读取 pending → POST → 移到 sent”，发送前没有原子抢占。
-
-建议修复：
-
-```text
-pending → 原子 rename 到 processing → POST → sent / pending / failed
-```
-
-只有成功抢占事件的 worker 可以发送。飞书工作流继续按 `event_id` 去重作为第二层保护。
-
-### 2. Hook 输入曾出现乱码
-
-`hook-errors.log` 曾出现 BOM / 编码异常导致 JSON 解析失败。`on-change-event.mjs` 已包含部分兼容处理，但 ChatGPT 与 Cursor 的真实载荷仍需继续验收。
-
-### 3. 部分控制台中文乱码
-
-`watch-all.mjs`、`.env.example` 等文件在 PowerShell 默认编码下显示过乱码，需要确认文件真实编码后再统一处理，避免直接根据终端乱码重写内容。
+`.local/` 包含队列、日志、baseline、PID 和运行状态，不应提交。控制台记录页只返回展示投影，不读取或暴露 Webhook 响应、token 等内部字段。
 
 ## 常用命令
 
 ```powershell
+npm test
 npm run watch:all
-
+npm run dashboard
+npm run health:status
 npm run records:status
 npm run records:dry-run
 npm run records:replay
-
 npm run commits:status
 npm run commits:dry-run
 npm run commits:replay
-
-npm test
 ```
 
-## 下一步
+控制台默认地址：`http://127.0.0.1:3847`。
 
-1. 修复多 worker 原子抢占，避免重复 Webhook。
-2. 在 `.env.local` 配置 Git 提交记录 Webhook。
-3. 完成飞书“提交记录”新增记录节点字段映射并启用工作流。
-4. 解决 ChatGPT 桌面端 Hook 自动触发问题。
-5. 分别进行 Cursor、ChatGPT、Git commit 的真实验收。
-6. 运行完整测试后再整理并提交当前工作区改动。
+## 当前验证结果
 
-## 注意
+- `npm test`：41 个测试全部通过。
+- `git diff --check`：未发现补丁解析错误；报告了 `docs/cursor.md`、`scripts/install-autostart.ps1`、`计划.md` 中的行尾空白，暂未处理。
+- 测试运行会生成/更新本地验证状态，提交前应重新检查 `git status --short`，不要把 `.local/` 或临时标记带入提交。
 
-- 当前工作区已有大量未提交改动，不要覆盖或回退无关文件。
-- `.env.local` 包含真实 Webhook Token，不应提交。
-- `.local/` 包含队列、日志和测试事件，不应提交。
+## 建议后续顺序
+
+1. 先确认 `amber-*.txt`、`test/smoke-marker.txt` 是否只是临时文件，并确认 `mi-notic` 删除/Amber 重命名是否符合预期。
+2. 用真实 Cursor、Codex/ChatGPT 和本地 Git commit 各跑一轮，核对事件 ID、文件统计、关联关系和飞书字段。
+3. 检查 `.env.local` 的两条记录 Webhook 和 `COMMIT_RECORD_SCAN_ROOTS`，确认 token 没有进入 Git。
+4. 再决定是否单独清理行尾空白、提交本次改动，以及是否需要补充真实桌面 Hook 的验收记录。
+
+## 注意事项
+
+- 不要覆盖或回退其他未提交改动；当前工作区是多条功能线的合并状态。
+- 不要把完整 diff、源代码或真实 Webhook 凭证写入记录或文档。
+- AI 修改记录目前依赖客户端 Hook 是否实际触发；桌面客户端不触发 Hook 时，Amber 本地 worker 本身无法补齐该事件。

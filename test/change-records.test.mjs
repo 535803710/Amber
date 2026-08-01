@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   writeFileSync
 } from "node:fs";
@@ -13,6 +14,7 @@ import { resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import {
   beginChangeTurn,
+  claimReadyQueueItems,
   completeChangeTurn,
   enqueueChangeEvent,
   getChangeRecordStatus,
@@ -21,7 +23,17 @@ import {
   toWebhookPayload
 } from "../scripts/lib/change-records.mjs";
 import { processReadyItems } from "../scripts/change-record-worker.mjs";
-import { readyCommitItems, scanCommitRecords } from "../scripts/lib/commit-records.mjs";
+import {
+  claimReadyCommitItems,
+  enqueueCommitEvent,
+  getCommitRecordStatus,
+  listPendingCommitItems,
+  parseScanRoots,
+  readyCommitItems,
+  resolveScanRoots,
+  scanCommitRecords
+} from "../scripts/lib/commit-records.mjs";
+import { deliver, startCommitRecordWorker } from "../scripts/commit-record-worker.mjs";
 import {
   extractCursorPromptFromHookLog,
   extractCursorResponseFromHookLog,
@@ -36,8 +48,38 @@ test("hook payload parser accepts a UTF-8 BOM", () => {
   );
 });
 
+test("commit scan roots parse multiple directories and remove duplicates", () => {
+  const root = mkdtempSync(resolve(tmpdir(), "amber-scan-roots-"));
+  const first = resolve(root, "first");
+  const second = resolve(root, "second");
+  mkdirSync(first, { recursive: true });
+  mkdirSync(second, { recursive: true });
+  try {
+    assert.deepEqual(parseScanRoots(`${first};${second};${first}`), [first, second, first]);
+    assert.deepEqual(resolveScanRoots({ env: { COMMIT_RECORD_SCAN_ROOTS: `${first};${second};${first}` } }), [first, second]);
+    assert.deepEqual(resolveScanRoots({ env: { COMMIT_RECORD_SCAN_ROOTS: "relative;missing" } }), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("commit scanner stays idle and clears removed scan baselines when no roots are configured", () => {
+  const root = mkdtempSync(resolve(tmpdir(), "amber-scan-disabled-"));
+  const state = resolve(root, "state");
+  try {
+    const result = scanCommitRecords({ rootDir: state, scanRoots: [] });
+    assert.deepEqual(result.scanRoots, []);
+    assert.equal(result.repositories, 0);
+    assert.equal(result.events.length, 0);
+    const scannerState = JSON.parse(readFileSync(resolve(state, ".local/commit-records/scanner-state.json"), "utf8"));
+    assert.deepEqual(scannerState.repositories, {});
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("commit scanner baselines existing history then records a new local commit", () => {
-  const root = mkdtempSync(resolve(tmpdir(), "mi-notic-commit-test-"));
+  const root = mkdtempSync(resolve(tmpdir(), "amber-commit-test-"));
   const projects = resolve(root, "projects");
   const repo = resolve(projects, "repo");
   const state = resolve(root, "state");
@@ -56,11 +98,310 @@ test("commit scanner baselines existing history then records a new local commit"
     const result = scanCommitRecords({ rootDir: state, scanRoot: projects });
     assert.equal(result.events.length, 1);
     const [item] = readyCommitItems({ rootDir: state });
+    assert.equal(listPendingCommitItems({ rootDir: state }).length, 1);
     assert.equal(item.envelope.event.event_type, "git_commit");
     assert.equal(item.envelope.event.commit_subject, "add feature");
     assert.deepEqual(item.envelope.event.changed_files, [{ status: "A", path: "feature.txt" }]);
+
+    scanCommitRecords({ rootDir: state, scanRoots: [] });
+    const readded = scanCommitRecords({ rootDir: state, scanRoots: [projects] });
+    assert.equal(readded.events.length, 0, "re-adding a removed root must establish a fresh baseline");
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("commit scanner preserves UTF-8 changed file names", () => {
+  const root = mkdtempSync(resolve(tmpdir(), "amber-commit-utf8-path-"));
+  const projects = resolve(root, "projects");
+  const repo = resolve(projects, "repo");
+  const state = resolve(root, "state");
+  mkdirSync(repo, { recursive: true });
+  git(repo, ["init"]);
+  git(repo, ["config", "user.email", "test@example.com"]);
+  git(repo, ["config", "user.name", "Test"]);
+  writeFileSync(resolve(repo, "initial.txt"), "initial\n", "utf8");
+  git(repo, ["add", "."]);
+  git(repo, ["commit", "-m", "initial"]);
+
+  try {
+    assert.equal(scanCommitRecords({ rootDir: state, scanRoot: projects }).events.length, 0);
+    writeFileSync(resolve(repo, "中文验收.txt"), "ok\n", "utf8");
+    git(repo, ["add", "."]);
+    git(repo, ["commit", "-m", "add utf8 path"]);
+
+    const result = scanCommitRecords({ rootDir: state, scanRoot: projects });
+    assert.deepEqual(result.events[0].changed_files, [{ status: "A", path: "中文验收.txt" }]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("commit scanner does not replay history after a temporary Git read failure", () => {
+  const root = mkdtempSync(resolve(tmpdir(), "amber-commit-recovery-"));
+  const projects = resolve(root, "projects");
+  const repo = resolve(projects, "repo");
+  const state = resolve(root, "state");
+  const gitDir = resolve(repo, ".git");
+  const backupGitDir = resolve(repo, ".git-backup");
+  mkdirSync(repo, { recursive: true });
+  git(repo, ["init"]);
+  git(repo, ["config", "user.email", "test@example.com"]);
+  git(repo, ["config", "user.name", "Test"]);
+  writeFileSync(resolve(repo, "initial.txt"), "initial\n", "utf8");
+  git(repo, ["add", "."]);
+  git(repo, ["commit", "-m", "initial"]);
+
+  try {
+    assert.equal(scanCommitRecords({ rootDir: state, scanRoot: projects }).events.length, 0);
+
+    renameSync(gitDir, backupGitDir);
+    mkdirSync(gitDir);
+    assert.equal(scanCommitRecords({ rootDir: state, scanRoot: projects }).events.length, 0);
+
+    rmSync(gitDir, { recursive: true, force: true });
+    renameSync(backupGitDir, gitDir);
+    const recovered = scanCommitRecords({ rootDir: state, scanRoot: projects });
+
+    assert.equal(recovered.events.length, 0);
+    assert.equal(listPendingCommitItems({ rootDir: state }).length, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("commit scanner repairs a legacy empty-ref state without replaying history", () => {
+  const root = mkdtempSync(resolve(tmpdir(), "amber-commit-legacy-state-"));
+  const projects = resolve(root, "projects");
+  const repo = resolve(projects, "repo");
+  const state = resolve(root, "state");
+  const stateFile = resolve(state, ".local/commit-records/scanner-state.json");
+  mkdirSync(repo, { recursive: true });
+  git(repo, ["init"]);
+  git(repo, ["config", "user.email", "test@example.com"]);
+  git(repo, ["config", "user.name", "Test"]);
+  writeFileSync(resolve(repo, "initial.txt"), "initial\n", "utf8");
+  git(repo, ["add", "."]);
+  git(repo, ["commit", "-m", "initial"]);
+  mkdirSync(resolve(stateFile, ".."), { recursive: true });
+  writeFileSync(
+    stateFile,
+    `${JSON.stringify({ repositories: { [repo]: { refs: {}, initializedAt: "2026-07-30T00:00:00.000Z" } } }, null, 2)}\n`,
+    "utf8"
+  );
+
+  try {
+    const recovered = scanCommitRecords({ rootDir: state, scanRoot: projects });
+
+    assert.equal(recovered.events.length, 0);
+    assert.equal(listPendingCommitItems({ rootDir: state }).length, 0);
+    const scannerState = JSON.parse(readFileSync(stateFile, "utf8"));
+    assert.ok(Object.keys(scannerState.repositories[repo].refs).length > 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("commit scanner records the first commit created after an empty repository baseline", () => {
+  const root = mkdtempSync(resolve(tmpdir(), "amber-empty-repo-"));
+  const projects = resolve(root, "projects");
+  const repo = resolve(projects, "repo");
+  const state = resolve(root, "state");
+  mkdirSync(repo, { recursive: true });
+  git(repo, ["init"]);
+  git(repo, ["config", "user.email", "test@example.com"]);
+  git(repo, ["config", "user.name", "Test"]);
+
+  try {
+    assert.equal(scanCommitRecords({ rootDir: state, scanRoot: projects }).events.length, 0);
+    writeFileSync(resolve(repo, "initial.txt"), "initial\n", "utf8");
+    git(repo, ["add", "."]);
+    git(repo, ["commit", "-m", "initial"]);
+
+    const result = scanCommitRecords({ rootDir: state, scanRoot: projects });
+    assert.equal(result.events.length, 1);
+    assert.equal(result.events[0].commit_subject, "initial");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("commit worker scans independently while a delivery batch is still running", async () => {
+  let scanCount = 0;
+  let deliveryCount = 0;
+  const worker = startCommitRecordWorker({
+    scanIntervalMs: 10,
+    deliveryIntervalMs: 10,
+    scan: () => {
+      scanCount += 1;
+    },
+    deliverBatch: async () => {
+      deliveryCount += 1;
+      await sleep(200);
+    },
+    onError: (error) => {
+      throw error;
+    }
+  });
+
+  try {
+    await sleep(60);
+    assert.ok(scanCount >= 3, `expected at least 3 scans, got ${scanCount}`);
+    assert.equal(deliveryCount, 1, "a running delivery batch must not overlap itself");
+  } finally {
+    worker.stop();
+  }
+});
+
+test("commit delivery limits each batch and leaves the backlog pending", async () => {
+  const state = mkdtempSync(resolve(tmpdir(), "amber-commit-state-"));
+  let requestCount = 0;
+  const server = createServer((_request, response) => {
+    requestCount += 1;
+    response.writeHead(200, { "Content-Type": "application/json" });
+    response.end('{"code":0}');
+  });
+  const url = await listen(server);
+
+  try {
+    for (const id of ["first", "second", "third"]) {
+      enqueueCommitEvent(sampleCommitEvent(id), { rootDir: state });
+    }
+
+    assert.equal(readyCommitItems({ rootDir: state, limit: 2 }).length, 2);
+    const result = await deliver(false, { rootDir: state, webhookUrl: url, batchSize: 2 });
+    assert.deepEqual(result, { ready: 2, sent: 2, failed: 0 });
+    assert.equal(requestCount, 2);
+    const status = getCommitRecordStatus({ rootDir: state });
+    assert.equal(status.sent, 2);
+    assert.equal(status.pending, 1);
+  } finally {
+    server.close();
+    rmSync(state, { recursive: true, force: true });
+  }
+});
+
+test("two change workers claim one pending event exactly once", () => {
+  const state = mkdtempSync(resolve(tmpdir(), "amber-outbox-claim-"));
+  try {
+    enqueueChangeEvent(sampleEvent("claim-once"), { rootDir: state });
+
+    const first = claimReadyQueueItems({ rootDir: state, limit: 1 });
+    const second = claimReadyQueueItems({ rootDir: state, limit: 1 });
+
+    assert.equal(first.length, 1);
+    assert.equal(second.length, 0);
+    assert.equal(getChangeRecordStatus({ rootDir: state }).processing, 1);
+  } finally {
+    rmSync(state, { recursive: true, force: true });
+  }
+});
+
+test("two commit workers claim one pending event exactly once", () => {
+  const state = mkdtempSync(resolve(tmpdir(), "amber-commit-outbox-claim-"));
+  try {
+    enqueueCommitEvent(sampleCommitEvent("commit-claim-once"), { rootDir: state });
+
+    const first = claimReadyCommitItems({ rootDir: state, limit: 1 });
+    const second = claimReadyCommitItems({ rootDir: state, limit: 1 });
+
+    assert.equal(first.length, 1);
+    assert.equal(second.length, 0);
+    assert.equal(getCommitRecordStatus({ rootDir: state }).processing, 1);
+  } finally {
+    rmSync(state, { recursive: true, force: true });
+  }
+});
+
+test("stale change processing claims are returned to pending and reclaimed", () => {
+  const state = mkdtempSync(resolve(tmpdir(), "amber-outbox-recovery-"));
+  try {
+    enqueueChangeEvent(sampleEvent("stale-change"), { rootDir: state });
+    const firstAt = new Date(Date.now() + 1_000);
+    const secondAt = new Date(firstAt.getTime() + 2_000);
+    const first = claimReadyQueueItems({ rootDir: state, now: firstAt, processingLeaseMs: 1_000 });
+    const recovered = claimReadyQueueItems({ rootDir: state, now: secondAt, processingLeaseMs: 1_000 });
+
+    assert.equal(first.length, 1);
+    assert.equal(recovered.length, 1);
+    assert.equal(recovered[0].envelope.event.event_id, "stale-change");
+    assert.equal(getChangeRecordStatus({ rootDir: state }).processing, 1);
+  } finally {
+    rmSync(state, { recursive: true, force: true });
+  }
+});
+
+test("stale commit processing claims are returned to pending and reclaimed", () => {
+  const state = mkdtempSync(resolve(tmpdir(), "amber-commit-outbox-recovery-"));
+  try {
+    enqueueCommitEvent(sampleCommitEvent("stale-commit"), { rootDir: state });
+    const firstAt = new Date(Date.now() + 1_000);
+    const secondAt = new Date(firstAt.getTime() + 2_000);
+    const first = claimReadyCommitItems({ rootDir: state, now: firstAt, processingLeaseMs: 1_000 });
+    const recovered = claimReadyCommitItems({ rootDir: state, now: secondAt, processingLeaseMs: 1_000 });
+
+    assert.equal(first.length, 1);
+    assert.equal(recovered.length, 1);
+    assert.equal(recovered[0].envelope.event.event_id, "stale-commit");
+    assert.equal(getCommitRecordStatus({ rootDir: state }).processing, 1);
+  } finally {
+    rmSync(state, { recursive: true, force: true });
+  }
+});
+
+test("concurrent change deliveries send one webhook", async () => {
+  const state = mkdtempSync(resolve(tmpdir(), "amber-outbox-delivery-"));
+  let requestCount = 0;
+  const server = createServer(async (_request, response) => {
+    requestCount += 1;
+    await sleep(40);
+    response.writeHead(200, { "Content-Type": "application/json" });
+    response.end('{"code":0}');
+  });
+  const url = await listen(server);
+
+  try {
+    enqueueChangeEvent(sampleEvent("concurrent-change"), { rootDir: state });
+    await Promise.all([
+      processReadyItems({ rootDir: state, webhookUrl: url }),
+      processReadyItems({ rootDir: state, webhookUrl: url })
+    ]);
+    const status = getChangeRecordStatus({ rootDir: state });
+    assert.equal(requestCount, 1);
+    assert.equal(status.pending, 0);
+    assert.equal(status.processing, 0);
+    assert.equal(status.sent, 1);
+  } finally {
+    server.close();
+    rmSync(state, { recursive: true, force: true });
+  }
+});
+
+test("concurrent commit deliveries send one webhook", async () => {
+  const state = mkdtempSync(resolve(tmpdir(), "amber-commit-outbox-delivery-"));
+  let requestCount = 0;
+  const server = createServer(async (_request, response) => {
+    requestCount += 1;
+    await sleep(40);
+    response.writeHead(200, { "Content-Type": "application/json" });
+    response.end('{"code":0}');
+  });
+  const url = await listen(server);
+
+  try {
+    enqueueCommitEvent(sampleCommitEvent("concurrent-commit"), { rootDir: state });
+    await Promise.all([
+      deliver(false, { rootDir: state, webhookUrl: url }),
+      deliver(false, { rootDir: state, webhookUrl: url })
+    ]);
+    const status = getCommitRecordStatus({ rootDir: state });
+    assert.equal(requestCount, 1);
+    assert.equal(status.pending, 0);
+    assert.equal(status.processing, 0);
+    assert.equal(status.sent, 1);
+  } finally {
+    server.close();
+    rmSync(state, { recursive: true, force: true });
   }
 });
 
@@ -201,6 +542,24 @@ test("no file change produces no queue item", () => {
   });
 });
 
+test("AI change records use the repository Git author and map it to Feishu fields", () => {
+  withRepo(({ repo, state }) => {
+    beginChangeTurn(hookInput("ChatGPT", repo, "author-session", "author-turn"), {
+      rootDir: state
+    });
+    writeFileSync(resolve(repo, "author.txt"), "author\n", "utf8");
+    const done = completeChangeTurn(hookInput("ChatGPT", repo, "author-session", "author-turn"), {
+      rootDir: state
+    });
+
+    assert.equal(done.event.author_name, "Test");
+    assert.equal(done.event.author_email, "test@example.com");
+    const payload = toWebhookPayload(done.event);
+    assert.equal(payload["作者"], "Test");
+    assert.equal(payload["作者邮箱"], "test@example.com");
+  });
+});
+
 test("Cursor completion can match a baseline created before generation_id exists", () => {
   withRepo(({ repo, state }) => {
     beginChangeTurn(
@@ -229,7 +588,7 @@ test("Cursor completion can match a baseline created before generation_id exists
 });
 
 test("duplicate event IDs are queued only once and payload maps Base fields", () => {
-  const state = mkdtempSync(resolve(tmpdir(), "mi-notic-state-"));
+  const state = mkdtempSync(resolve(tmpdir(), "amber-state-"));
   try {
     const event = sampleEvent("duplicate");
     assert.equal(enqueueChangeEvent(event, { rootDir: state }).queued, true);
@@ -245,7 +604,7 @@ test("duplicate event IDs are queued only once and payload maps Base fields", ()
 });
 
 test("worker sends Bearer webhook and moves successful event to sent", async () => {
-  const state = mkdtempSync(resolve(tmpdir(), "mi-notic-state-"));
+  const state = mkdtempSync(resolve(tmpdir(), "amber-state-"));
   let received;
   const server = createServer((request, response) => {
     let body = "";
@@ -282,7 +641,7 @@ test("worker sends Bearer webhook and moves successful event to sent", async () 
 });
 
 test("401 and timeout remain pending for retry; failed items can be replayed", async () => {
-  const state401 = mkdtempSync(resolve(tmpdir(), "mi-notic-state-"));
+  const state401 = mkdtempSync(resolve(tmpdir(), "amber-state-"));
   const unauthorized = createServer((_request, response) => {
     response.writeHead(401);
     response.end("unauthorized");
@@ -302,7 +661,7 @@ test("401 and timeout remain pending for retry; failed items can be replayed", a
     rmSync(state401, { recursive: true, force: true });
   }
 
-  const stateTimeout = mkdtempSync(resolve(tmpdir(), "mi-notic-state-"));
+  const stateTimeout = mkdtempSync(resolve(tmpdir(), "amber-state-"));
   const hanging = createServer(() => {});
   const urlTimeout = await listen(hanging);
   try {
@@ -336,7 +695,7 @@ test("401 and timeout remain pending for retry; failed items can be replayed", a
 });
 
 function withRepo(run) {
-  const root = mkdtempSync(resolve(tmpdir(), "mi-notic-test-"));
+  const root = mkdtempSync(resolve(tmpdir(), "amber-test-"));
   const repo = resolve(root, "repo");
   const state = resolve(root, "state");
   mkdirSync(repo);
@@ -365,6 +724,32 @@ function hookInput(source, cwd, sessionId, turnId, prompt = "") {
   return { source, cwd, session_id: sessionId, turn_id: turnId, prompt };
 }
 
+function sampleCommitEvent(eventId) {
+  return {
+    schema_version: 1,
+    event_type: "git_commit",
+    event_id: eventId,
+    detected_at: "2026-08-01T00:00:00.000Z",
+    committed_at: "2026-08-01T00:00:00.000Z",
+    project: "sample",
+    repo_path: "D:\\sample",
+    branch: "main",
+    commit_sha: `${eventId}-sha`,
+    short_sha: eventId,
+    parent_shas: [],
+    commit_kind: "normal",
+    ref_update_type: "forward",
+    author_name: "Test",
+    commit_subject: eventId,
+    commit_message: eventId,
+    changed_files: [],
+    changed_file_count: 0,
+    additions: 0,
+    deletions: 0,
+    related_ai_event_ids: []
+  };
+}
+
 function sampleEvent(eventId) {
   return {
     schema_version: 1,
@@ -386,6 +771,10 @@ function sampleEvent(eventId) {
     result_status: "completed",
     collection_quality: "exact"
   };
+}
+
+function sleep(ms) {
+  return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 }
 
 function listen(server) {

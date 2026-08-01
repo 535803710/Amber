@@ -9,7 +9,7 @@ import { markPendingAskNotify } from "./ask-notify-window.mjs";
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const STATUS_SCRIPT = "scripts/status.mjs";
 const DEFAULT_HOME = resolve(SCRIPT_DIR, "..");
-const FALLBACK_HOME = "D:/project/mi-notic";
+const FALLBACK_HOME = "D:/project/Amber";
 
 main().catch((error) => {
   console.error(error.message);
@@ -27,21 +27,21 @@ async function main() {
   const dryRun = consumeFlag(args, "--dry-run");
   const summary = args.join(" ").trim() || "Agent 提问";
   const message = `[需要操作] ${summary}`;
-  const miNoticHome = resolveMiNoticHome();
+  const amberHome = resolveAmberHome();
 
   if (dryRun) {
-    console.log(JSON.stringify({ miNoticHome, message }, null, 2));
+    console.log(JSON.stringify({ amberHome, message }, null, 2));
     return;
   }
 
-  await runStatus(miNoticHome, message);
-  markPendingAskNotify(summary, { baseDir: miNoticHome, ttlSeconds: 120 });
+  await runStatus(amberHome, message);
+  markPendingAskNotify(summary, { baseDir: amberHome, ttlSeconds: 120 });
   console.log(`Notification sent: 需要操作`);
 }
 
-function resolveMiNoticHome() {
+function resolveAmberHome() {
   const candidates = [
-    process.env.MI_NOTIC_HOME,
+    process.env.AMBER_HOME,
     DEFAULT_HOME,
     FALLBACK_HOME
   ].filter(Boolean);
@@ -54,14 +54,14 @@ function resolveMiNoticHome() {
   }
 
   throw new Error(
-    "找不到 mi-notic。请设置环境变量 MI_NOTIC_HOME，或把仓库放在 D:/project/mi-notic"
+    "找不到 Amber。请设置环境变量 AMBER_HOME，或把仓库放在 D:/project/Amber"
   );
 }
 
-function runStatus(miNoticHome, message) {
+function runStatus(amberHome, message) {
   return new Promise((resolveRun, rejectRun) => {
-    const child = spawn(process.execPath, [resolve(miNoticHome, STATUS_SCRIPT), "wait", message, "--force", "--editor", "Cursor"], {
-      cwd: miNoticHome,
+    const child = spawn(process.execPath, [resolve(amberHome, STATUS_SCRIPT), "wait", message, "--force", "--editor", "Cursor"], {
+      cwd: amberHome,
       stdio: "inherit",
       shell: false
     });
@@ -98,6 +98,6 @@ function printHelp() {
   Agent 在调用 AskQuestion 之前应先运行本脚本，直接发 wait 到飞书/手环。
 
 环境变量：
-  MI_NOTIC_HOME  mi-notic 仓库路径（可选）
+  AMBER_HOME  Amber 仓库路径（可选）
 `);
 }

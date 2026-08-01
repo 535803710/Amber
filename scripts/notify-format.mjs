@@ -79,7 +79,7 @@ export function resolveEditorFromAppName(appName) {
  * 推断飞书第一行展示的编辑器名
  */
 export function resolveEditorName({ source, appName, processName, message } = {}) {
-  const explicit = normalizeEditorName(source || process.env.MI_NOTIC_EDITOR);
+  const explicit = normalizeEditorName(source || process.env.AMBER_EDITOR);
   if (explicit) {
     return explicit;
   }

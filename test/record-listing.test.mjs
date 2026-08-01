@@ -13,9 +13,11 @@ test("AI 修改记录按完成时间倒序分页，并仅返回展示投影", ()
     const page = listRecordPage("change", { pageSize: "1" }, { rootDir: root });
     assert.deepEqual(page.counts, { all: 2, pending: 1, sent: 1, failed: 0 });
     assert.equal(page.pagination.totalPages, 2);
-    assert.equal(page.items[0].summary, "完成页面");
+    assert.equal(page.items[0].summary, "增加记录页面");
     assert.equal(page.items[0].sessionId, undefined);
     assert.equal(page.items[0].baselineTree, undefined);
+    assert.equal(page.items[0].authorName, "Amber User");
+    assert.equal(page.items[0].authorEmail, "amber@example.com");
   });
 });
 
@@ -46,7 +48,7 @@ test("分页参数拒绝非法状态、非正整数和过大页大小", () => {
 });
 
 function withRecordState(run) {
-  const root = mkdtempSync(resolve(tmpdir(), "mi-notic-record-list-"));
+  const root = mkdtempSync(resolve(tmpdir(), "amber-record-list-"));
   try {
     run(root);
   } finally {
@@ -64,9 +66,11 @@ function changeEvent({ completedAt, result = "" }) {
   return {
     event_id: `change-${completedAt}`,
     completed_at: completedAt,
-    project: "mi-notic",
+    project: "amber",
     branch: "feature/records",
     source: "Cursor",
+    author_name: "Amber User",
+    author_email: "amber@example.com",
     prompt_summary: "增加记录页面",
     result_summary: result,
     changed_files: [{ status: "M", path: "dashboard/app.js" }],
@@ -82,7 +86,7 @@ function commitEvent({ subject }) {
   return {
     event_id: `commit-${subject}`,
     committed_at: "2026-08-01T09:00:00.000Z",
-    project: "mi-notic",
+    project: "amber",
     branch: "master",
     author_name: "tester",
     short_sha: "abcd1234",

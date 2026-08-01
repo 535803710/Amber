@@ -4,7 +4,8 @@ import { dirname, resolve } from "node:path";
 const DEFAULT_SETTINGS = {
   notifyOnDone: true,
   notifyOnWait: true,
-  notifyOnInfo: true
+  notifyOnInfo: true,
+  healthAlertsEnabled: true
 };
 
 export function getSettingsPath(rootDir = process.cwd()) {
@@ -22,7 +23,8 @@ export function readSettings(rootDir = process.cwd()) {
     return {
       notifyOnDone: data.notifyOnDone !== false,
       notifyOnWait: data.notifyOnWait !== false,
-      notifyOnInfo: data.notifyOnInfo === true
+      notifyOnInfo: data.notifyOnInfo === true,
+      healthAlertsEnabled: data.healthAlertsEnabled !== false
     };
   } catch {
     return { ...DEFAULT_SETTINGS };
@@ -34,7 +36,8 @@ export function writeSettings(settings, rootDir = process.cwd()) {
   const next = {
     notifyOnDone: settings.notifyOnDone !== false,
     notifyOnWait: settings.notifyOnWait !== false,
-    notifyOnInfo: settings.notifyOnInfo === true
+    notifyOnInfo: settings.notifyOnInfo === true,
+    healthAlertsEnabled: settings.healthAlertsEnabled !== false
   };
 
   mkdirSync(dirname(filePath), { recursive: true });

@@ -10,7 +10,20 @@ import {
   getChangeRecordStatus,
   replayFailedEvents
 } from "./lib/change-records.mjs";
-import { getCommitRecordStatus, replayFailedCommitEvents } from "./lib/commit-records.mjs";
+import { collectHealthSnapshot, evaluateHealth } from "./lib/health.mjs";
+import { archiveStaleBaselines } from "./lib/health-reset.mjs";
+import { assertWebhookSuccess, postJson } from "./change-record-worker.mjs";
+import {
+  claimPendingCommitItem,
+  getCommitRecordStatus,
+  listPendingCommitItems,
+  markCommitFailed,
+  markCommitSent,
+  readyCommitItems,
+  replayFailedCommitEvents,
+  parseScanRoots,
+  writeCommitWorkerState
+} from "./lib/commit-records.mjs";
 import { listRecordPage } from "./lib/record-listing.mjs";
 import {
   getWatcherStatus,
@@ -34,6 +47,7 @@ const JSON_BODY_LIMIT_BYTES = 64 * 1024;
 const CHILD_PROCESS_TIMEOUT_MS = 15_000;
 let accessProbeCache = null;
 let autostartStatusCache = null;
+let commitSyncState = idleCommitSyncState();
 
 try {
   main();
@@ -44,7 +58,7 @@ try {
 
 function main() {
   loadEnvFile(".env");
-  loadEnvFile(".env.local");
+  loadEnvFile(".env.local", new Set(["COMMIT_RECORD_SCAN_ROOTS"]));
 
   const port = readPort(process.argv.slice(2));
   const server = createServer((req, res) => {
@@ -54,7 +68,7 @@ function main() {
   });
 
   server.listen(port, "127.0.0.1", () => {
-    console.log(`mi-notic 控制台：http://127.0.0.1:${port}`);
+    console.log(`Amber 控制台：http://127.0.0.1:${port}`);
   });
 }
 
@@ -73,6 +87,16 @@ async function handleRequest(req, res) {
 async function handleApi(req, res, pathname, url) {
   if (pathname === "/api/state" && req.method === "GET") {
     sendJson(res, 200, await buildState());
+    return;
+  }
+
+  if (pathname === "/api/health/reset" && req.method === "POST") {
+    const body = await readJsonBody(req);
+    const source = body.source === undefined ? "all" : String(body.source).trim().toLowerCase();
+    if (!["all", "cursor", "chatgpt"].includes(source)) {
+      throw createHttpError(400, "source 必须是 cursor、chatgpt 或 all。");
+    }
+    sendJson(res, 200, archiveStaleBaselines({ rootDir: ROOT_DIR, source }));
     return;
   }
 
@@ -111,10 +135,46 @@ async function handleApi(req, res, pathname, url) {
     return;
   }
 
+  if (pathname === "/api/commit-record-settings" && req.method === "GET") {
+    sendJson(res, 200, getCommitRecordStatus({ rootDir: ROOT_DIR }));
+    return;
+  }
+
+  if (pathname === "/api/commit-record-settings" && req.method === "POST") {
+    const body = await readJsonBody(req);
+    sendJson(res, 200, saveCommitRecordSettings(body));
+    return;
+  }
+
+  if (pathname === "/api/choose-folder" && req.method === "POST") {
+    sendJson(res, 200, await chooseFolder());
+    return;
+  }
+
   if (pathname === "/api/change-records/replay" && req.method === "POST") {
     sendJson(res, 200, replayFailedEvents({ rootDir: ROOT_DIR }));
     return;
   }
+  if (pathname === "/api/commit-records/sync" && req.method === "GET") {
+    sendJson(res, 200, commitSyncState);
+    return;
+  }
+
+  if (pathname === "/api/commit-records/sync" && req.method === "POST") {
+    if (commitSyncState.running) {
+      throw createHttpError(409, "Git 提交记录正在同步中。");
+    }
+    startCommitSync();
+    sendJson(res, 202, commitSyncState);
+    return;
+  }
+
+  const singleCommitMatch = pathname.match(/^\/api\/commit-records\/([A-Za-z0-9._-]+)\/send$/);
+  if (singleCommitMatch && req.method === "POST") {
+    sendJson(res, 200, await sendPendingCommit(singleCommitMatch[1]));
+    return;
+  }
+
   if (pathname === "/api/commit-records/replay" && req.method === "POST") {
     sendJson(res, 200, replayFailedCommitEvents({ rootDir: ROOT_DIR }));
     return;
@@ -148,6 +208,102 @@ async function handleApi(req, res, pathname, url) {
   sendJson(res, 404, { error: "Not found" });
 }
 
+async function sendPendingCommit(eventId) {
+  if (commitSyncState.running) {
+    throw createHttpError(409, "Git 提交记录正在全量同步中。");
+  }
+  if (!process.env.FEISHU_COMMIT_WEBHOOK_URL?.trim()) {
+    throw createHttpError(409, "未配置 FEISHU_COMMIT_WEBHOOK_URL。");
+  }
+
+  const item = claimPendingCommitItem(eventId, { rootDir: ROOT_DIR });
+  if (!item) {
+    throw createHttpError(404, "未找到待发送的 Git 提交记录。");
+  }
+
+  await deliverCommitItem(item);
+  return { ok: true, eventId };
+}
+
+function startCommitSync() {
+  if (!process.env.FEISHU_COMMIT_WEBHOOK_URL?.trim()) {
+    commitSyncState = {
+      ...idleCommitSyncState(),
+      lastError: "未配置 FEISHU_COMMIT_WEBHOOK_URL。"
+    };
+    return;
+  }
+  const items = listPendingCommitItems({ rootDir: ROOT_DIR });
+  commitSyncState = {
+    running: true,
+    total: items.length,
+    processed: 0,
+    sent: 0,
+    failed: 0,
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+    lastError: null
+  };
+
+  queueMicrotask(async () => {
+    for (const item of items) {
+      try {
+        const claimed = claimPendingCommitItem(item.envelope.event.event_id, { rootDir: ROOT_DIR });
+        if (!claimed) {
+          continue;
+        }
+        await deliverCommitItem(claimed);
+        commitSyncState.sent += 1;
+      } catch (error) {
+        commitSyncState.failed += 1;
+        commitSyncState.lastError = error.message;
+      } finally {
+        commitSyncState.processed += 1;
+      }
+    }
+    commitSyncState.running = false;
+    commitSyncState.finishedAt = new Date().toISOString();
+  });
+}
+
+async function deliverCommitItem(item) {
+  const webhookUrl = process.env.FEISHU_COMMIT_WEBHOOK_URL?.trim();
+  if (!webhookUrl) {
+    throw createHttpError(409, "未配置 FEISHU_COMMIT_WEBHOOK_URL。");
+  }
+
+  try {
+    const response = await postJson(
+      webhookUrl,
+      item.envelope.event,
+      process.env.FEISHU_COMMIT_WEBHOOK_TOKEN?.trim() || ""
+    );
+    assertWebhookSuccess(response);
+    markCommitSent(item, response, { rootDir: ROOT_DIR });
+    writeCommitWorkerState({ lastSuccessAt: new Date().toISOString(), lastError: null }, { rootDir: ROOT_DIR });
+  } catch (error) {
+    markCommitFailed(item, error, { rootDir: ROOT_DIR });
+    writeCommitWorkerState(
+      { lastError: error.message, lastErrorAt: new Date().toISOString() },
+      { rootDir: ROOT_DIR }
+    );
+    throw error;
+  }
+}
+
+function idleCommitSyncState() {
+  return {
+    running: false,
+    total: 0,
+    processed: 0,
+    sent: 0,
+    failed: 0,
+    startedAt: null,
+    finishedAt: null,
+    lastError: null
+  };
+}
+
 async function buildState() {
   const watcher = getWatcherStatus(ROOT_DIR);
   const settings = readSettings(ROOT_DIR);
@@ -155,6 +311,8 @@ async function buildState() {
   const notificationAccess = await probeNotificationAccess();
   const feishu = readFeishuConfig();
   const autostart = await readAutostartStatus();
+  const healthSnapshot = collectHealthSnapshot({ rootDir: ROOT_DIR });
+  const health = evaluateHealth(healthSnapshot, { now: healthSnapshot.now });
 
   return {
     watcher,
@@ -169,6 +327,7 @@ async function buildState() {
       baseUrl: "https://transsioner.feishu.cn/base/Inmhb4Vl0alBIAsvzaxcxC0Ln0d"
     },
     commitRecords: getCommitRecordStatus({ rootDir: ROOT_DIR }),
+    health,
     autostart,
     logTail: readLogTail(ROOT_DIR, 30)
   };
@@ -190,6 +349,61 @@ function saveChangeRecordSettings(body) {
   });
   reloadEnvKeys(["FEISHU_CHANGE_WEBHOOK_URL", "FEISHU_CHANGE_WEBHOOK_TOKEN"]);
   return getChangeRecordStatus({ rootDir: ROOT_DIR });
+}
+
+function saveCommitRecordSettings(body) {
+  if (!body || body.scanRoots === undefined) {
+    throw createHttpError(400, "请提供 Git 提交扫描目录。");
+  }
+
+  const roots = [];
+  const seen = new Set();
+  for (const value of parseScanRoots(body.scanRoots)) {
+    if (!isAbsolute(value)) {
+      throw createHttpError(400, `扫描目录必须是绝对路径：${value}`);
+    }
+    const root = resolve(value);
+    let directory = false;
+    try {
+      directory = existsSync(root) && statSync(root).isDirectory();
+    } catch {
+      directory = false;
+    }
+    if (!directory) {
+      throw createHttpError(400, `扫描目录必须是已存在的目录：${root}`);
+    }
+    const key = process.platform === "win32" ? root.toLowerCase() : root;
+    if (!seen.has(key)) {
+      seen.add(key);
+      roots.push(root);
+    }
+  }
+
+  writeEnvLocalValues({
+    COMMIT_RECORD_SCAN_ROOTS: roots.length ? roots.map((root) => root.replaceAll("\\", "/")).join(";") : null
+  });
+  reloadEnvKeys(["COMMIT_RECORD_SCAN_ROOTS"]);
+  return getCommitRecordStatus({ rootDir: ROOT_DIR });
+}
+
+async function chooseFolder() {
+  if (process.platform !== "win32") {
+    throw createHttpError(501, "当前系统不支持打开 Windows 文件夹选择器。");
+  }
+
+  const script = [
+    "Add-Type -AssemblyName System.Windows.Forms",
+    "$dialog = New-Object System.Windows.Forms.FolderBrowserDialog",
+    "$dialog.Description = '选择 Git 提交扫描目录'",
+    "$dialog.ShowNewFolderButton = $false",
+    "if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Out.Write($dialog.SelectedPath) }"
+  ].join("; ");
+  const result = await runCommand(
+    "powershell.exe",
+    ["-NoProfile", "-STA", "-Command", script],
+    { timeoutMs: 300_000 }
+  );
+  return { path: result.stdout || "" };
 }
 
 function readStatus() {
@@ -518,7 +732,7 @@ function readPort(args) {
   return value;
 }
 
-function loadEnvFile(fileName) {
+function loadEnvFile(fileName, overrideKeys = new Set()) {
   const filePath = resolve(ROOT_DIR, fileName);
   if (!existsSync(filePath)) {
     return;
@@ -538,7 +752,7 @@ function loadEnvFile(fileName) {
 
     const key = trimmed.slice(0, equalIndex).trim();
     const value = unquoteEnvValue(trimmed.slice(equalIndex + 1).trim());
-    if (key && process.env[key] === undefined) {
+    if (key && (process.env[key] === undefined || overrideKeys.has(key))) {
       process.env[key] = value;
     }
   }
@@ -599,7 +813,7 @@ function reloadEnvKeys(keys) {
   }
 
   loadEnvFile(".env");
-  loadEnvFile(".env.local");
+  loadEnvFile(".env.local", new Set(keys));
 }
 
 function writeEnvLocalValues(updates) {

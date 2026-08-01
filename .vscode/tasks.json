@@ -2,52 +2,52 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "mi-notic: test notification",
+      "label": "Amber: test notification",
       "type": "shell",
       "command": "npm run notify:test",
       "problemMatcher": []
     },
     {
-      "label": "mi-notic: status done",
+      "label": "Amber: status done",
       "type": "shell",
       "command": "npm run status:done",
       "problemMatcher": []
     },
     {
-      "label": "mi-notic: status wait",
+      "label": "Amber: status wait",
       "type": "shell",
       "command": "npm run status:wait",
       "problemMatcher": []
     },
     {
-      "label": "mi-notic: run command with notification",
+      "label": "Amber: run command with notification",
       "type": "shell",
       "command": "npm run run:notify -- --name \"示例命令\" -- node -e \"process.exit(0)\"",
       "problemMatcher": []
     },
     {
-      "label": "mi-notic: watch Codex/Cursor notifications",
+      "label": "Amber: watch Codex/Cursor notifications",
       "type": "shell",
       "command": "npm run watch:notifications",
       "isBackground": true,
       "problemMatcher": []
     },
     {
-      "label": "mi-notic: watch Codex/Cursor UI prompts",
+      "label": "Amber: watch Codex/Cursor UI prompts",
       "type": "shell",
       "command": "npm run watch:ui-prompts",
       "isBackground": true,
       "problemMatcher": []
     },
     {
-      "label": "mi-notic: dashboard",
+      "label": "Amber: dashboard",
       "type": "shell",
       "command": "npm run dashboard",
       "isBackground": true,
       "problemMatcher": []
     },
     {
-      "label": "mi-notic: watch all (toast + UI prompts)",
+      "label": "Amber: watch all (toast + UI prompts)",
       "type": "shell",
       "command": "npm run watch:all",
       "isBackground": true,

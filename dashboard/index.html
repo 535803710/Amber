@@ -3,10 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>mi-notic 控制台</title>
+  <title>Amber 控制台</title>
   <script>
     (() => {
-      const saved = localStorage.getItem("mi-notic-theme");
+      const saved = localStorage.getItem("amber-theme");
       if (saved === "light" || saved === "dark") {
         document.documentElement.dataset.theme = saved;
       }
@@ -18,9 +18,11 @@
   <div class="page">
     <header class="header">
       <div class="header-copy">
-        <p class="prompt-line"><span>mi-notic@local</span>:<span>~/control</span>$ status</p>
-        <h1>notifyctl</h1>
-        <p class="subtitle">toast -> feishu</p>
+        <div class="brand-lockup">
+          <p id="brandKicker" class="brand-kicker">AI 协作研发记忆</p>
+          <h1 id="brandTitle" class="brand-title">琥珀计划</h1>
+          <p class="subtitle">将转瞬即逝的 AI 协作，沉淀为可持续使用的研发记忆</p>
+        </div>
       </div>
       <div class="header-actions">
         <button id="themeToggle" class="btn btn-ghost" type="button" aria-label="切换明暗模式">theme</button>
@@ -85,6 +87,13 @@
             <span>
               <strong id="infoRuleTitle">info</strong>
               <small id="infoRuleDesc">其他提示</small>
+            </span>
+          </label>
+          <label class="toggle">
+            <input id="healthAlertsEnabled" type="checkbox">
+            <span>
+              <strong id="healthAlertsTitle">collection alerts</strong>
+              <small id="healthAlertsDesc">异常时发送飞书提醒</small>
             </span>
           </label>
         </div>
@@ -163,13 +172,6 @@
         <p id="recordsMsg" class="hint" role="status" aria-live="polite"></p>
       </section>
 
-      <section class="card card-wide">
-        <div class="card-head">
-          <h2 id="logTitle"><span>$</span> tail .local/watch-toast.log</h2>
-        </div>
-        <pre id="logTail" class="log">loading...</pre>
-      </section>
-
       <section class="card">
         <div class="card-head"><h2><span>$</span> Git 提交记录</h2><span id="commitRecordsBadge" class="badge">loading</span></div>
         <dl class="meta">
@@ -178,8 +180,34 @@
           <div><dt>失败</dt><dd id="commitRecordsFailed">-</dd></div>
           <div><dt>最近扫描</dt><dd id="commitLastScan">-</dd></div>
         </dl>
-        <p class="hint">配置 FEISHU_COMMIT_WEBHOOK_URL 后自动发送；只扫描 D:\\project，不修改项目 Hook。</p>
-        <div class="actions"><button id="replayCommitRecordsBtn" class="btn btn-ghost" type="button">重试失败</button></div>
+        <p class="hint" id="commitScanRootsHint">配置扫描目录后自动发现 Git 提交；不修改项目 Hook。</p>
+        <label class="field">
+          <span class="field-heading"><span id="commitScanRootsLabel">扫描目录（每行一个绝对路径）</span><button id="chooseCommitScanRootBtn" class="btn btn-ghost btn-small" type="button">选择文件夹</button></span>
+          <textarea id="commitScanRoots" rows="3" placeholder="D:\\project"></textarea>
+          <small id="commitScanRootsMeta">当前：未配置</small>
+        </label>
+        <div class="actions commit-scan-actions">
+          <button id="saveCommitScanRootsBtn" class="btn btn-primary" type="button">保存扫描范围</button>
+          <button id="replayCommitRecordsBtn" class="btn btn-ghost" type="button">重试失败</button>
+        </div>
+        <p id="commitScanRootsMsg" class="hint" role="status" aria-live="polite"></p>
+      </section>
+
+      <section class="card card-wide health-card">
+        <div class="card-head">
+          <h2 id="healthTitle"><span>$</span> 采集健康</h2>
+          <span id="healthBadge" class="badge">loading</span>
+        </div>
+        <div id="healthComponents" class="health-components" aria-live="polite"></div>
+        <div id="healthIssues" class="health-issues" aria-live="polite"></div>
+        <p id="healthCheckedAt" class="hint"></p>
+      </section>
+
+      <section class="card card-wide">
+        <div class="card-head">
+          <h2 id="logTitle"><span>$</span> tail .local/watch-all.log</h2>
+        </div>
+        <pre id="logTail" class="log">loading...</pre>
       </section>
     </main>
   </div>

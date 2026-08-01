@@ -1,7 +1,7 @@
 const RECORD_TYPE = document.documentElement.dataset.recordType;
 const PAGE_SIZE = 20;
-const THEME_KEY = "mi-notic-theme";
-const LANG_KEY = "mi-notic-lang";
+const THEME_KEY = "amber-theme";
+const LANG_KEY = "amber-lang";
 
 const els = {
   title: document.getElementById("pageTitle"),
@@ -31,6 +31,7 @@ const I18N = {
     branch: "分支",
     source: "来源",
     author: "作者",
+    email: "邮箱",
     commit: "提交",
     changes: "变更",
     result: "结果",
@@ -46,7 +47,13 @@ const I18N = {
     page: (current, total) => `第 ${current} / ${total} 页`,
     additions: (value) => `+${value}`,
     deletions: (value) => `-${value}`,
-    time: "时间"
+    time: "时间",
+    send: "发送",
+    sendBusy: "发送中…",
+    sendSuccess: "已发送",
+    syncAll: "全量同步待发送",
+    syncBusy: "同步中…",
+    syncProgress: (state) => `同步进度：${state.processed}/${state.total}，成功 ${state.sent}，失败 ${state.failed}`
   },
   en: {
     pageTitle: { change: "AI change records", commit: "Git commit records" },
@@ -64,6 +71,7 @@ const I18N = {
     branch: "branch",
     source: "source",
     author: "author",
+    email: "email",
     commit: "commit",
     changes: "changes",
     result: "result",
@@ -79,7 +87,13 @@ const I18N = {
     page: (current, total) => `page ${current} / ${total}`,
     additions: (value) => `+${value}`,
     deletions: (value) => `-${value}`,
-    time: "time"
+    time: "time",
+    send: "send",
+    sendBusy: "sending…",
+    sendSuccess: "sent",
+    syncAll: "sync all pending",
+    syncBusy: "syncing…",
+    syncProgress: (state) => `sync: ${state.processed}/${state.total}, sent ${state.sent}, failed ${state.failed}`
   }
 };
 
@@ -111,7 +125,7 @@ function applyTheme(theme) {
 
 function applyLanguage() {
   document.documentElement.lang = language === "zh" ? "zh-CN" : "en";
-  document.title = `${t("pageTitle")[RECORD_TYPE]} · mi-notic`;
+  document.title = `${t("pageTitle")[RECORD_TYPE]} · Amber`;
   els.title.textContent = t("pageTitle")[RECORD_TYPE];
   els.subtitle.textContent = t("subtitle")[RECORD_TYPE];
   els.langToggle.textContent = t("langToggle");
@@ -132,11 +146,16 @@ async function refreshRecords() {
       page: String(state.page),
       pageSize: String(PAGE_SIZE)
     });
-    const response = await fetch(`/api/${RECORD_TYPE === "change" ? "change-records" : "commit-records"}?${params}`);
+    const [response, syncResponse] = await Promise.all([
+      fetch(`/api/${RECORD_TYPE === "change" ? "change-records" : "commit-records"}?${params}`),
+      RECORD_TYPE === "commit" ? fetch("/api/commit-records/sync") : Promise.resolve(null)
+    ]);
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || t("loadFailed"));
+    const sync = syncResponse ? await syncResponse.json() : null;
     state = { status: state.status, page: data.pagination.page };
     renderFilters(data.counts);
+    renderCommitActions(sync);
     renderRecords(data.items);
     renderPagination(data.pagination);
     els.count.textContent = t("count", data.items.length, data.pagination.totalItems);
@@ -161,6 +180,35 @@ function renderFilters(counts) {
   }));
 }
 
+function renderCommitActions(sync) {
+  const existing = document.getElementById("commitDeliveryActions");
+  if (RECORD_TYPE !== "commit") {
+    existing?.remove();
+    return;
+  }
+
+  const container = existing || document.createElement("div");
+  container.id = "commitDeliveryActions";
+  container.className = "delivery-actions";
+  container.replaceChildren();
+  const button = createText("button", "btn btn-primary", sync?.running ? t("syncBusy") : t("syncAll"));
+  button.type = "button";
+  button.disabled = Boolean(sync?.running);
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    try {
+      await api("/api/commit-records/sync", { method: "POST" });
+    } finally {
+      refreshRecords();
+    }
+  });
+  container.append(button);
+  if (sync?.running || sync?.finishedAt) {
+    container.append(createText("span", "hint", t("syncProgress", sync)));
+  }
+  els.filters.after(container);
+}
+
 function renderRecords(items) {
   if (items.length === 0) {
     els.list.replaceChildren(createText("p", "record-message", t("empty")));
@@ -174,7 +222,8 @@ function createRecordCard(record) {
   card.className = "record-card";
   const head = document.createElement("div");
   head.className = "record-card-head";
-  const title = createText("h2", "record-summary", record.summary);
+  const titleText = RECORD_TYPE === "change" ? (record.promptSummary || record.summary) : record.summary;
+  const title = createText("h2", "record-summary", titleText);
   const badge = createText("span", `badge record-status ${record.queueStatus}`, t("status")[record.queueStatus]);
   head.append(title, badge);
 
@@ -182,13 +231,41 @@ function createRecordCard(record) {
   meta.className = "record-meta";
   appendMeta(meta, t("project"), record.project || "-");
   appendMeta(meta, t("branch"), record.branch || "-");
-  appendMeta(meta, RECORD_TYPE === "change" ? t("source") : t("author"), RECORD_TYPE === "change" ? record.source || "-" : record.authorName || "-");
+  if (RECORD_TYPE === "change") {
+    appendMeta(meta, t("source"), record.source || "-");
+    appendMeta(meta, t("author"), record.authorName || "-");
+    if (record.authorEmail) appendMeta(meta, "email", record.authorEmail);
+  } else {
+    appendMeta(meta, t("author"), record.authorName || "-");
+  }
   if (RECORD_TYPE === "commit") appendMeta(meta, t("commit"), record.shortSha || "-");
   appendMeta(meta, t("changes"), `${t("additions", record.additions)} / ${t("deletions", record.deletions)} · ${record.changedFileCount}`);
   appendMeta(meta, t("time"), formatTime(record.occurredAt));
 
-  card.append(head, meta, createDetails(record));
+  card.append(head, meta);
+  if (RECORD_TYPE === "commit" && record.queueStatus === "pending") {
+    card.append(createSendButton(record));
+  }
+  card.append(createDetails(record));
   return card;
+}
+
+function createSendButton(record) {
+  const button = createText("button", "btn btn-primary record-send", t("send"));
+  button.type = "button";
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    button.textContent = t("sendBusy");
+    try {
+      await api(`/api/commit-records/${encodeURIComponent(record.id)}/send`, { method: "POST" });
+      button.textContent = t("sendSuccess");
+      await refreshRecords();
+    } catch (error) {
+      button.disabled = false;
+      button.textContent = error.message;
+    }
+  });
+  return button;
 }
 
 function createDetails(record) {
@@ -231,7 +308,10 @@ function createPageButton(label, enabled, targetPage) {
 }
 
 function appendMeta(target, label, value) {
-  target.append(createText("dt", "", label), createText("dd", "", value));
+  const item = document.createElement("div");
+  item.className = "record-meta-item";
+  item.append(createText("dt", "", label), createText("dd", "", value));
+  target.append(item);
 }
 
 function appendDetail(target, label, value) {
@@ -239,6 +319,17 @@ function appendDetail(target, label, value) {
   const section = document.createElement("section");
   section.append(createText("h3", "", label), createText("pre", "", value));
   target.append(section);
+}
+
+async function api(path, options = {}) {
+  const response = await fetch(path, {
+    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    ...options
+  });
+  const text = await response.text();
+  const data = text ? JSON.parse(text) : null;
+  if (!response.ok) throw new Error(data?.error || t("loadFailed"));
+  return data;
 }
 
 function formatFiles(files) {
@@ -273,3 +364,6 @@ els.langToggle.addEventListener("click", () => {
 
 applyLanguage();
 refreshRecords();
+if (RECORD_TYPE === "commit") {
+  setInterval(() => refreshRecords(), 2_000);
+}

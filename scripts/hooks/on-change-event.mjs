@@ -19,10 +19,15 @@ import {
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = resolve(SCRIPT_DIR, "../..");
 const LOG_FILE = resolve(ROOT_DIR, ".local/change-records/hook-errors.log");
+const HEALTH_FILE = resolve(ROOT_DIR, ".local/change-records/hook-health.ndjson");
 
 if (resolve(process.argv[1] || "") === fileURLToPath(import.meta.url)) {
   main().catch((error) => {
     logError(error);
+    appendHookHealth(
+      readOption(process.argv.slice(2), "--source") || "ChatGPT",
+      { event: "error", error: error?.message || String(error) }
+    );
     writeHookResponse();
   });
 }
@@ -38,11 +43,13 @@ async function main() {
   }
 
   if (event === "usersubmitprompt" || event === "userpromptsubmit" || event === "beforesubmitprompt") {
-    beginChangeTurn(input, { rootDir: ROOT_DIR });
+    const result = beginChangeTurn(input, { rootDir: ROOT_DIR });
+    appendHookHealth(source, { event: "begin", key: result.baseline?.key, skipped: result.skipped });
   } else if (event === "afteragentresponse") {
     cacheChangeTurnResponse(input, { rootDir: ROOT_DIR });
   } else if (event === "stop" || event === "agent-turn-complete") {
-    completeChangeTurn(input, { rootDir: ROOT_DIR });
+    const result = completeChangeTurn(input, { rootDir: ROOT_DIR });
+    appendHookHealth(source, { event: "complete", key: result.event?.event_id, skipped: result.skipped });
   }
 
   writeHookResponse();
@@ -316,4 +323,13 @@ function writeHookResponse() {
 function logError(error) {
   mkdirSync(dirname(LOG_FILE), { recursive: true });
   appendFileSync(LOG_FILE, `[${new Date().toISOString()}] ${error?.stack || error}\n`, "utf8");
+}
+
+function appendHookHealth(source, details = {}) {
+  mkdirSync(dirname(HEALTH_FILE), { recursive: true });
+  appendFileSync(
+    HEALTH_FILE,
+    `${JSON.stringify({ source, at: new Date().toISOString(), ...details })}\n`,
+    "utf8"
+  );
 }

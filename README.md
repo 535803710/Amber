@@ -33,7 +33,7 @@
 
 ![飞书群聊，机器人页面](https://pub-a953275fa2c34c18b80fc1f84e3ea746.r2.dev/xiaowo/2026/06/e346757c3691107435dd4c6f4b33c84a.png)
 
-2. 填配置：打开 `mi-notic.bat` → 按 1 打开 web 配置页面 → 填入 webhook，保存。
+2. 填配置：打开 `Amber.bat` → 按 1 打开 web 配置页面 → 填入 webhook，保存。
 
    或者直接改配置文件：(网页上配置比较方便)
 
@@ -46,13 +46,15 @@ copy .env.example .env.local
 
 ### 用网页控制台（推荐）
 
-**最省事的方式**。双击 `mi-notic.bat`，弹出菜单选 1：
+**最省事的方式**。双击 `Amber.bat`，弹出菜单选 1：
 
 ![bat终端页面](https://pub-a953275fa2c34c18b80fc1f84e3ea746.r2.dev/xiaowo/2026/06/09a0ddbf3fd8bc3f5aa40a6845d37156.png)
 
 或者跑 `npm run dashboard`，浏览器开 http://127.0.0.1:3847 。开关监听、勾选哪些场景发飞书、看最近一条状态，都在这一页。先点「测试通知」，手环震了就说明链路通了。
 
 控制台顶部可进入两个只读记录页：`/change-records.html` 浏览 AI 修改记录，`/commit-records.html` 浏览 Git 提交记录。两页都从本地 `.local` 队列读取，支持按投递状态筛选、分页和展开详情；不会读取飞书 Base 或暴露 webhook 响应、会话标识等内部字段。
+
+首页的“采集健康”会显示 Hook、运行进程、Git 扫描和投递队列状态。残留的未完成 baseline 可从对应异常旁归档（可恢复，不影响已发送记录）；“通知规则”中的“采集异常告警”只控制飞书告警，不会关闭健康检测。
 
 ![web页面](https://pub-a953275fa2c34c18b80fc1f84e3ea746.r2.dev/xiaowo/2026/06/6b07a23b4e502d4973170411c3056e6a.png)
 
@@ -63,7 +65,10 @@ copy .env.example .env.local
 ```powershell
 npm run notify:test   # 测链路
 npm run watch:all     # 开监听
+npm run health:status # 查看一次采集健康快照（不会发送告警）
 ```
+
+`watch:all` 会同时管理监听进程组和独立健康监控。健康监控只检查并告警，不会自动重启；异常、严重度升级、持续严重异常和恢复会通过通用 `FEISHU_WEBHOOK_URL` 通知。
 
 不想每次手动开，装一次开机自启：
 
@@ -71,7 +76,7 @@ npm run watch:all     # 开监听
 npm run autostart:install
 ```
 
-Cursor 里也能开：命令面板 `Tasks: Run Task` → `mi-notic: watch all (toast + UI prompts)`。
+Cursor 里也能开：命令面板 `Tasks: Run Task` → `Amber: watch all (toast + UI prompts)`。
 
 ### AI 修改记录
 
@@ -92,7 +97,7 @@ Webhook 地址和 Bearer token 可在网页控制台的“修改记录”区域�
 
 ### Git 提交记录
 
-`watch:all` 会只读扫描 `D:\project` 下的 Git 本地分支；不修改项目源码、Git 配置或现有 Hook。首次启动只建立基线，之后的新 commit 会写入独立队列并投递到 `FEISHU_COMMIT_WEBHOOK_URL`。可用 `npm run commits:status`、`npm run commits:dry-run`、`npm run commits:replay` 查看和处理本地队列。
+`watch:all` 会只读扫描 `COMMIT_RECORD_SCAN_ROOTS` 配置的目录下的 Git 本地分支；不修改项目源码、Git 配置或现有 Hook。支持用分号配置多个绝对路径，例如 `COMMIT_RECORD_SCAN_ROOTS=D:/project;E:/work`。未配置时不扫描；首次扫描只建立基线，之后的新 commit 会写入独立队列并投递到 `FEISHU_COMMIT_WEBHOOK_URL`。可用控制台或 `npm run commits:status`、`npm run commits:dry-run`、`npm run commits:replay` 查看和处理本地队列。
 
 ## 最后
 
@@ -110,4 +115,4 @@ Agent 等我确认，手环震，我回去签「条约」。
 提醒补上了，注意力没补上。好几次手环震了，我这边还在刷，白震了。。。😂
 
 ## GIT地址：
-项目地址：[https://github.com/535803710/mi-notic](https://github.com/535803710/mi-notic)
+项目地址：[https://github.com/535803710/Amber](https://github.com/535803710/Amber)
