@@ -1,8 +1,11 @@
-# vibecoding 时摸鱼防沉迷提醒⏰
+# Amber（琥珀计划）
 
+Amber 采集 AI 修改与 Git 提交事实，通过飞书沉淀研发记忆，并为 TClaw 的查询、提醒和后续行动提供数据基础。
+
+当前采集链路与健康监控已经完成。产品方向和阶段规划见 [琥珀计划](docs/琥珀计划.md)。
 
 ![手环效果图](https://pub-a953275fa2c34c18b80fc1f84e3ea746.r2.dev/xiaowo/2026/06/18e81951287250e7e78d205dbead07c6.jpg)
-## 等 Agent 的时候总在摸鱼错过“签字”，于是想办法把通知推到了手环
+## 项目起点：把 Agent 通知推到手环
 
 每次 vibecoding 等待的时候，我总是去摸鱼🐟 刷刷擦边什么的。
 
@@ -14,7 +17,7 @@
 
 所以搞了个小东西：把通知推到手环上。
 
-## 它是什么（原理
+## 工作原理
 
 一个跑在本地的小工具。Agent 跑完，或者卡着等你操作时，飞书推一条消息，手环跟着震一下。
 
@@ -99,7 +102,7 @@ Webhook 地址和 Bearer token 可在网页控制台的“修改记录”区域�
 
 `watch:all` 会只读扫描 `COMMIT_RECORD_SCAN_ROOTS` 配置的目录下的 Git 本地分支；不修改项目源码、Git 配置或现有 Hook。支持用分号配置多个绝对路径，例如 `COMMIT_RECORD_SCAN_ROOTS=D:/project;E:/work`。未配置时不扫描；首次扫描只建立基线，之后的新 commit 会写入独立队列并投递到 `FEISHU_COMMIT_WEBHOOK_URL`。可用控制台或 `npm run commits:status`、`npm run commits:dry-run`、`npm run commits:replay` 查看和处理本地队列。
 
-## 最后
+## 通知能力的起点
 
 跑起来之后是这样的：
 
@@ -113,6 +116,8 @@ Agent 等我确认，手环震，我回去签「条约」。
 但是。。。
 
 提醒补上了，注意力没补上。好几次手环震了，我这边还在刷，白震了。。。😂
+
+通知提醒是 Amber 的起点。项目当前已经扩展到研发事实采集、健康监控和 TClaw 研发记忆，后续建设以 [琥珀计划](docs/琥珀计划.md) 为准。
 
 ## GIT地址：
 项目地址：[https://github.com/535803710/Amber](https://github.com/535803710/Amber)
