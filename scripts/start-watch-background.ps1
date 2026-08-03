@@ -4,14 +4,31 @@ $ErrorActionPreference = "Stop"
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $LogDir = Join-Path $Root ".local"
 $LogFile = Join-Path $LogDir "watch-all.log"
+$ErrorLogFile = Join-Path $LogDir "watch-all-error.log"
+$HealthLogFile = Join-Path $LogDir "health-monitor.log"
+$HealthErrorLogFile = Join-Path $LogDir "health-monitor-error.log"
+$LauncherLogFile = Join-Path $LogDir "start-watch.log"
 $PidFile = Join-Path $LogDir "watch-all.pid"
 $HealthPidFile = Join-Path $LogDir "health-monitor.pid"
+$DesiredFile = Join-Path $LogDir "runtime-desired.json"
+$WatchScript = Join-Path $Root "scripts\watch-all.mjs"
+$HealthScript = Join-Path $Root "scripts\health-monitor-worker.mjs"
 
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
+$Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
 function Write-Log([string]$Message) {
     $line = "[{0}] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $Message
-    Add-Content -Path $LogFile -Value $line -Encoding UTF8
+    Add-Content -Path $LauncherLogFile -Value $line -Encoding UTF8
+}
+
+function Write-RuntimeDesired {
+    $json = [ordered]@{
+        running = $true
+        changedAt = (Get-Date).ToUniversalTime().ToString("o")
+        consecutiveMisses = 0
+    } | ConvertTo-Json
+    [System.IO.File]::WriteAllText($DesiredFile, "$json`n", $Utf8NoBom)
 }
 
 function Test-LiveNodePid([string]$PidPath) {
@@ -30,16 +47,34 @@ if ($watchRunning -and $healthRunning) {
 }
 
 $node = (Get-Command node -ErrorAction Stop).Source
-$watchScript = Join-Path $Root "scripts\start-watch-stack.mjs"
 
-Write-Log "starting watch:all root=$Root"
+if (-not $watchRunning) {
+    Write-Log "starting watch:all root=$Root"
+    $watchProcess = Start-Process `
+        -FilePath $node `
+        -ArgumentList @($WatchScript) `
+        -WorkingDirectory $Root `
+        -WindowStyle Hidden `
+        -RedirectStandardOutput $LogFile `
+        -RedirectStandardError $ErrorLogFile `
+        -PassThru
+    [System.IO.File]::WriteAllText($PidFile, "$($watchProcess.Id)`n", $Utf8NoBom)
+    Write-Log "started watch:all pid=$($watchProcess.Id)"
+}
 
-$process = Start-Process `
-    -FilePath $node `
-    -ArgumentList @($watchScript, "--background") `
-    -WorkingDirectory $Root `
-    -WindowStyle Hidden `
-    -PassThru
+Write-RuntimeDesired
 
-Write-Log "started stack launcher pid=$($process.Id) log=$LogFile"
-Write-Host "Amber watch stack started (launcher pid=$($process.Id))"
+if (-not $healthRunning) {
+    $healthProcess = Start-Process `
+        -FilePath $node `
+        -ArgumentList @($HealthScript) `
+        -WorkingDirectory $Root `
+        -WindowStyle Hidden `
+        -RedirectStandardOutput $HealthLogFile `
+        -RedirectStandardError $HealthErrorLogFile `
+        -PassThru
+    [System.IO.File]::WriteAllText($HealthPidFile, "$($healthProcess.Id)`n", $Utf8NoBom)
+    Write-Log "started health monitor pid=$($healthProcess.Id)"
+}
+
+Write-Host "Amber watch stack started"

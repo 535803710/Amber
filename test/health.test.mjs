@@ -98,6 +98,26 @@ test("health evaluator reports git scan lag and repository errors", () => {
   assert.ok(health.issues.some((issue) => issue.id === "git_scan_errors"));
 });
 
+test("health evaluator suppresses runtime and git scan alerts during startup grace", () => {
+  const health = evaluateHealth({
+    now: NOW,
+    runtime: {
+      expectedRunning: true,
+      running: false,
+      consecutiveMisses: 3,
+      desiredChangedAt: new Date(NOW - 30_000).toISOString()
+    },
+    gitScan: {
+      configured: true,
+      lastScanAt: new Date(NOW - 10 * 60_000).toISOString(),
+      scanIntervalMs: 5_000
+    }
+  });
+
+  assert.equal(health.issues.some((issue) => issue.id === "runtime_stopped"), false);
+  assert.equal(health.issues.some((issue) => issue.id === "git_scan_stale"), false);
+});
+
 test("health thresholds accept environment overrides without accepting invalid values", () => {
   const thresholds = resolveHealthThresholds({
     AMBER_HEALTH_BASELINE_WARN_MS: "1234",

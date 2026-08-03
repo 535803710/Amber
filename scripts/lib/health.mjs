@@ -13,6 +13,7 @@ export const DEFAULT_HEALTH_THRESHOLDS = Object.freeze({
   processingWarnMs: 30_000,
   processingCriticalMs: 2 * 60_000,
   runtimeMisses: 2,
+  startupGraceMs: 2 * 60_000,
   gitScanWarnFloorMs: 30_000,
   gitScanCriticalFloorMs: 2 * 60_000,
   gitScanWarnMultiplier: 6,
@@ -103,6 +104,10 @@ export function resolveHealthThresholds(env = process.env) {
       DEFAULT_HEALTH_THRESHOLDS.gitScanCriticalFloorMs,
       checkIntervalMs * 4
     ),
+    startupGraceMs: positiveInteger(
+      env.AMBER_HEALTH_STARTUP_GRACE_MS,
+      DEFAULT_HEALTH_THRESHOLDS.startupGraceMs
+    ),
     alertRepeatMs: positiveInteger(
       env.AMBER_HEALTH_ALERT_REPEAT_MS,
       DEFAULT_HEALTH_THRESHOLDS.alertRepeatMs
@@ -128,12 +133,13 @@ export function evaluateHealth(snapshot = {}, options = {}) {
     alertChannel: component("alertChannel", snapshot.alertChannel)
   };
 
-  evaluateRuntime(components.runtime, snapshot.runtime || {}, issues, now, thresholds);
+  const startupGraceActive = isStartupGraceActive(snapshot.runtime || {}, now, thresholds);
+  evaluateRuntime(components.runtime, snapshot.runtime || {}, issues, now, thresholds, startupGraceActive);
   evaluateHook("Cursor", components.cursor, snapshot.hooks?.Cursor || {}, issues, now, thresholds);
   evaluateHook("ChatGPT", components.chatgpt, snapshot.hooks?.ChatGPT || {}, issues, now, thresholds);
   evaluateDelivery("ai", components.aiDelivery, snapshot.aiDelivery || {}, issues, now, thresholds);
   evaluateDelivery("git", components.gitDelivery, snapshot.gitDelivery || {}, issues, now, thresholds);
-  evaluateGitScan(components.gitScan, snapshot.gitScan || {}, issues, now, thresholds);
+  evaluateGitScan(components.gitScan, snapshot.gitScan || {}, issues, now, thresholds, startupGraceActive);
   components.alertChannel.status = snapshot.alertChannel?.configured && snapshot.alertChannel?.enabled !== false
     ? "healthy"
     : "disabled";
@@ -163,7 +169,7 @@ export function evaluateHealth(snapshot = {}, options = {}) {
   };
 }
 
-function evaluateRuntime(target, runtime, issues, now, thresholds) {
+function evaluateRuntime(target, runtime, issues, now, thresholds, startupGraceActive = false) {
   if (!runtime.expectedRunning) {
     target.status = "disabled";
     return;
@@ -173,6 +179,9 @@ function evaluateRuntime(target, runtime, issues, now, thresholds) {
     return;
   }
   target.status = "warning";
+  if (startupGraceActive) {
+    return;
+  }
   if ((runtime.consecutiveMisses || 0) >= thresholds.runtimeMisses) {
     issues.push(issue(
       "runtime_stopped",
@@ -290,7 +299,7 @@ function evaluateAgeIssue(kind, state, target, timestamp, issues, now, warnMs, c
   }
 }
 
-function evaluateGitScan(target, scan, issues, now, thresholds) {
+function evaluateGitScan(target, scan, issues, now, thresholds, startupGraceActive = false) {
   target.details = {
     configured: Boolean(scan.configured),
     lastScanAt: scan.lastScanAt || null,
@@ -300,6 +309,7 @@ function evaluateGitScan(target, scan, issues, now, thresholds) {
   };
   target.status = target.details.configured ? "healthy" : "disabled";
   if (!target.details.configured) return;
+  if (startupGraceActive) return;
 
   const age = ageOf(target.details.lastScanAt, now);
   if (age !== null) {
@@ -409,8 +419,15 @@ function collectRuntimeHealth(rootDir) {
     pid: running ? pid : null,
     healthRunning,
     healthPid: healthRunning ? healthPid : null,
+    desiredChangedAt: desired?.changedAt || null,
     consecutiveMisses: running ? 0 : Number(desired?.consecutiveMisses || 0)
   };
+}
+
+function isStartupGraceActive(runtime, now, thresholds) {
+  if (!runtime.expectedRunning) return false;
+  const age = ageOf(runtime.desiredChangedAt, now);
+  return age !== null && age >= 0 && age < thresholds.startupGraceMs;
 }
 
 function emptyHookHealth() {

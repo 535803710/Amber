@@ -8,6 +8,7 @@ import { spawn } from "node:child_process";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const WATCH_ALL = resolve(ROOT, "scripts/watch-all.mjs");
 const HEALTH_MONITOR = resolve(ROOT, "scripts/health-monitor-worker.mjs");
+const WINDOWS_BACKGROUND_SCRIPT = resolve(ROOT, "scripts/start-watch-background.ps1");
 const LOCAL_DIR = resolve(ROOT, ".local");
 const WATCH_PID = resolve(LOCAL_DIR, "watch-all.pid");
 const HEALTH_PID = resolve(LOCAL_DIR, "health-monitor.pid");
@@ -17,6 +18,17 @@ main();
 
 function main() {
   const background = process.argv.includes("--background");
+  if (background && process.platform === "win32") {
+    const launcher = spawn(
+      "powershell.exe",
+      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", WINDOWS_BACKGROUND_SCRIPT],
+      { cwd: ROOT, detached: true, stdio: "ignore", windowsHide: true }
+    );
+    launcher.unref();
+    console.log("Amber watch stack start requested");
+    return;
+  }
+
   writeRuntimeDesired(true);
   mkdirSync(LOCAL_DIR, { recursive: true });
 

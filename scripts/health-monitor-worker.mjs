@@ -154,6 +154,7 @@ function readRuntimeSnapshot(rootDir, { persist = true } = {}) {
     expectedRunning: desired.running === true,
     running,
     pid: running ? pid : null,
+    desiredChangedAt: desired.changedAt || null,
     consecutiveMisses
   };
 }

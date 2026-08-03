@@ -198,7 +198,7 @@ function discoverRepositories(roots) {
     let entries = [];
     try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
     if (entries.some((entry) => entry.name === ".git")) {
-      result.add(resolve(dir));
+      if (git(dir, ["rev-parse", "--git-dir"]).ok) result.add(resolve(dir));
       return;
     }
     for (const entry of entries) {

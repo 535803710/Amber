@@ -5,6 +5,7 @@ import { spawn, spawnSync } from "node:child_process";
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const STACK_SCRIPT = resolve(SCRIPT_DIR, "../start-watch-stack.mjs");
+const WINDOWS_BACKGROUND_SCRIPT = resolve(SCRIPT_DIR, "../start-watch-background.ps1");
 
 export function getWatcherPaths(rootDir = process.cwd()) {
   const localDir = resolve(rootDir, ".local");
@@ -46,7 +47,8 @@ export function startWatcher(rootDir = process.cwd()) {
 
   const { logFile } = getWatcherPaths(rootDir);
   mkdirSync(dirname(logFile), { recursive: true });
-  const child = spawn(process.execPath, [STACK_SCRIPT, "--background"], {
+  const { command, args } = resolveWatcherStartCommand(process.platform);
+  const child = spawn(command, args, {
     cwd: rootDir,
     detached: true,
     stdio: "ignore",
@@ -58,6 +60,15 @@ export function startWatcher(rootDir = process.cwd()) {
   appendLog(logFile, `started stack launcher pid=${child.pid}`);
 
   return { ok: true, pid: child.pid, starting: true };
+}
+
+export function resolveWatcherStartCommand(platform = process.platform) {
+  return platform === "win32"
+    ? {
+        command: "powershell.exe",
+        args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", WINDOWS_BACKGROUND_SCRIPT]
+      }
+    : { command: process.execPath, args: [STACK_SCRIPT, "--background"] };
 }
 
 export function stopWatcher(rootDir = process.cwd()) {

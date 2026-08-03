@@ -170,6 +170,26 @@ test("commit scanner does not replay history after a temporary Git read failure"
   }
 });
 
+test("commit scanner ignores an invalid Git marker without reporting a repository error", () => {
+  const root = mkdtempSync(resolve(tmpdir(), "amber-commit-invalid-git-"));
+  const projects = resolve(root, "projects");
+  const invalidRepo = resolve(projects, "invalid-repo");
+  const state = resolve(root, "state");
+  mkdirSync(resolve(invalidRepo, ".git"), { recursive: true });
+
+  try {
+    const result = scanCommitRecords({ rootDir: state, scanRoot: projects });
+    const scannerState = JSON.parse(
+      readFileSync(resolve(state, ".local/commit-records/scanner-state.json"), "utf8")
+    );
+
+    assert.equal(result.repositories, 0);
+    assert.deepEqual(scannerState.repositoryErrors, []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("commit scanner repairs a legacy empty-ref state without replaying history", () => {
   const root = mkdtempSync(resolve(tmpdir(), "amber-commit-legacy-state-"));
   const projects = resolve(root, "projects");
