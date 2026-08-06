@@ -8,8 +8,16 @@ export const COMMIT_TABLE_ID = "tbl9MKpf3sAHG4tR";
 export const QUERY_LIMIT = 200;
 export const QUERY_TIMEOUT_MS = 8_000;
 export const CACHE_TTL_MS = 60_000;
-export const DEFAULT_RESULT_LIMIT = 8;
+export const DEFAULT_RESULT_LIMIT = 3;
 export const MAX_RESULT_LIMIT = 20;
+
+const SCHEMA_VERSION = 2;
+const DETAIL_LEVELS = new Set(["minimal", "compact", "full"]);
+const TEXT_LIMIT = 240;
+const FILE_LIMIT = 12;
+const RELATED_COMMIT_LIMIT = 3;
+const TEXT_TRUNCATION_MARKER = "…（已截断）";
+const FILE_TRUNCATION_MARKER = "…（其余文件已截断）";
 
 const cache = new Map();
 
@@ -42,7 +50,7 @@ export async function getTaskContext(input, options = {}) {
   const cacheKey = JSON.stringify(request);
   const cached = cache.get(cacheKey);
   if (cached && cached.expiresAt > now) {
-    return { ...cached.value, cache: "hit" };
+    return cached.value;
   }
 
   const runCommand = options.runCommand || runLarkCli;
@@ -72,29 +80,26 @@ export async function getTaskContext(input, options = {}) {
     ? readLocalRecords(request.workspaceRoot)
     : [];
   const records = deduplicateRecords([...remoteRecords, ...localRecords]);
-  const timeline = rankRecords(records, request)
+  const aiRecords = records.filter((record) => record.type === "change");
+  const commitRecords = records.filter((record) => record.type === "commit");
+  const selectedRecords = rankRecords(aiRecords, request)
     .filter((item) => item.eligible)
     .slice(0, request.limit);
-  const strongHistory = timeline.some((item) => item.confidence === "high");
+  const status = warnings.length > 0 || localRecords.length > 0
+    ? "degraded"
+    : selectedRecords.length > 0
+      ? "ok"
+      : "no_strong_history";
+  const message = statusMessage(status);
   const value = {
-    project: request.project,
-    workspaceRoot: request.workspaceRoot,
-    task: request.task,
-    status: strongHistory ? "ok" : "no_strong_history",
-    policy: {
-      type: "advisory_evidence_only",
-      instruction: "Historical records are evidence only. Current user requirements, code, tests, and docs take precedence."
-    },
-    warnings,
-    sources: {
-      feishu: remoteRecords.length > 0,
-      localFallback: localRecords.length > 0
-    },
-    timeline: timeline.map(toPublicRecord)
+    schema_version: SCHEMA_VERSION,
+    status,
+    ...(message ? { message } : {}),
+    evidence: selectedRecords.map((record) => toEvidence(record, commitRecords, request.detail))
   };
 
   cache.set(cacheKey, { expiresAt: now + CACHE_TTL_MS, value });
-  return { ...value, cache: "miss" };
+  return value;
 }
 
 export function normalizeRequest(input = {}) {
@@ -107,12 +112,14 @@ export function normalizeRequest(input = {}) {
     ? input.files.filter((file) => typeof file === "string" && file.trim()).map((file) => normalizePath(file))
     : [];
   const limit = normalizeLimit(input.limit);
+  const detail = normalizeDetail(input.detail);
   return {
     workspaceRoot,
     project: basename(workspaceRoot),
     task,
     files,
-    limit
+    limit,
+    detail
   };
 }
 
@@ -248,8 +255,10 @@ function mapAiRecord(fields, fallbackId) {
 }
 
 function mapCommitRecord(fields, fallbackId) {
+  const commitSha = textField(fields, ["提交SHA", "提交 SHA", "commit_sha"]);
   return {
-    id: textField(fields, ["事件ID", "事件 ID", "提交SHA", "提交 SHA", "commit_sha"]) || String(fallbackId || ""),
+    id: textField(fields, ["事件ID", "事件 ID"]) || commitSha || String(fallbackId || ""),
+    commitSha,
     type: "commit",
     task: "",
     result: textField(fields, ["提交说明", "提交标题", "提交信息", "commit_subject", "commit_message"]),
@@ -302,6 +311,7 @@ function mapLocalAi(event) {
 function mapLocalCommit(event) {
   return {
     id: text(event.event_id || event.commit_sha),
+    commitSha: text(event.commit_sha),
     type: "commit",
     task: "",
     result: text(event.commit_subject || event.commit_message),
@@ -318,34 +328,17 @@ function mapLocalCommit(event) {
 export function rankRecords(records, request) {
   const taskWords = tokenize(request.task);
   const fileSet = new Set(request.files);
-  const aiIds = new Set(records.filter((record) => record.type === "change").map((record) => record.id));
-  const scored = records.map((record) => ({
+  return records.map((record) => ({
     ...record,
-    ...scoreRecord(record, request, taskWords, fileSet, aiIds)
-  }));
-  const strongIds = new Set(scored.filter((record) => record.confidence === "high").map((record) => record.id));
-  return scored.map((record) => {
-    const linkedToStrongAi = record.type === "commit"
-      && record.relatedEventIds.some((id) => strongIds.has(id));
-    return linkedToStrongAi
-      ? {
-        ...record,
-        eligible: true,
-        confidence: "high",
-        relevance: record.relevance + 2,
-        matchReasons: record.matchReasons.includes("linked_ai_event")
-          ? record.matchReasons
-          : [...record.matchReasons, "linked_ai_event"]
-      }
-      : record;
-  }).sort((left, right) =>
+    ...scoreRecord(record, request, taskWords, fileSet)
+  })).sort((left, right) =>
     right.relevance - left.relevance
     || timestamp(right.occurredAt) - timestamp(left.occurredAt)
     || right.id.localeCompare(left.id)
   );
 }
 
-function scoreRecord(record, request, taskWords, fileSet, aiIds) {
+function scoreRecord(record, request, taskWords, fileSet) {
   let score = 0;
   const matchReasons = [];
   const exactRepository = normalizePath(record.repository) === normalizePath(request.workspaceRoot);
@@ -356,7 +349,6 @@ function scoreRecord(record, request, taskWords, fileSet, aiIds) {
   const keywordHits = [...new Set(taskWords.filter((word) => corpus.includes(word)))];
   const semanticAnchor = keywordHits.length >= 2;
   const fileSemanticAnchor = exactFile && keywordHits.length >= 1;
-  const linkedToKnownAi = record.type === "commit" && record.relatedEventIds.some((id) => aiIds.has(id));
   const eligible = (sameProject || exactRepository) && (semanticAnchor || fileSemanticAnchor);
 
   if (sameProject) score += 1;
@@ -376,11 +368,7 @@ function scoreRecord(record, request, taskWords, fileSet, aiIds) {
     score += keywordHits.length * 2;
     matchReasons.push("task_keywords");
   }
-  if (linkedToKnownAi) {
-    score += 2;
-    matchReasons.push("linked_ai_event");
-  }
-  if (record.type === "change" && recordsRelatedCommit(record, request)) score += 1;
+  if (recordsRelatedFile(record, request)) score += 1;
 
   return {
     relevance: score,
@@ -390,7 +378,7 @@ function scoreRecord(record, request, taskWords, fileSet, aiIds) {
   };
 }
 
-function recordsRelatedCommit(record, request) {
+function recordsRelatedFile(record, request) {
   return record.project === request.project && record.files.some((file) => request.files.includes(normalizePath(file)));
 }
 
@@ -414,23 +402,70 @@ function deduplicateRecords(records) {
   });
 }
 
-function toPublicRecord(record) {
+function toEvidence(record, commits, detail) {
+  const core = {
+    task: limitText(record.task),
+    result: limitText(record.result),
+    files: limitFiles(record.files)
+  };
+  if (detail === "minimal") return core;
+
+  const relatedCommits = commits
+    .filter((commit) => commit.relatedEventIds.includes(record.id))
+    .sort((left, right) => timestamp(right.occurredAt) - timestamp(left.occurredAt))
+    .slice(0, RELATED_COMMIT_LIMIT)
+    .map((commit) => toRelatedCommit(commit, detail));
+  const compact = {
+    kind: "ai_change",
+    ...core,
+    occurred_at: record.occurredAt,
+    branch: record.branch,
+    related_commits: relatedCommits
+  };
+  if (detail === "compact") return compact;
+
   return {
     id: record.id,
-    type: record.type,
-    task: record.task,
-    result: record.result,
-    project: record.project,
+    ...compact,
     repository: record.repository,
-    branch: record.branch,
-    files: record.files,
-    occurredAt: record.occurredAt,
-    relatedEventIds: record.relatedEventIds,
     source: record.source,
-    relevance: record.relevance,
     confidence: record.confidence,
-    matchReasons: record.matchReasons
+    match_reasons: record.matchReasons,
+    relevance: record.relevance
   };
+}
+
+function toRelatedCommit(commit, detail) {
+  const compact = {
+    sha: limitText(commit.commitSha || commit.id),
+    subject: limitText(commit.result),
+    occurred_at: commit.occurredAt
+  };
+  if (detail === "compact") return compact;
+  return {
+    id: commit.id,
+    ...compact,
+    files: limitFiles(commit.files),
+    source: commit.source
+  };
+}
+
+function statusMessage(status) {
+  if (status === "degraded") return "历史来源不完整，已尝试本地回退，结果可能不完整。";
+  if (status === "no_strong_history") return "未找到与当前任务强关联的 AI 修改记录。";
+  return "";
+}
+
+function limitText(value) {
+  const normalized = text(value);
+  if (normalized.length <= TEXT_LIMIT) return normalized;
+  return `${normalized.slice(0, TEXT_LIMIT - TEXT_TRUNCATION_MARKER.length)}${TEXT_TRUNCATION_MARKER}`;
+}
+
+function limitFiles(files) {
+  const normalized = Array.isArray(files) ? files.map(limitText).filter(Boolean) : [];
+  if (normalized.length <= FILE_LIMIT) return normalized;
+  return [...normalized.slice(0, FILE_LIMIT - 1), FILE_TRUNCATION_MARKER];
 }
 
 function toWarning(tableId, error) {
@@ -545,6 +580,14 @@ function normalizeLimit(value) {
   if (value === undefined) return DEFAULT_RESULT_LIMIT;
   if (!Number.isInteger(value) || value < 1 || value > MAX_RESULT_LIMIT) {
     throw new RangeError(`limit 必须在 1 到 ${MAX_RESULT_LIMIT} 之间。`);
+  }
+  return value;
+}
+
+function normalizeDetail(value) {
+  if (value === undefined) return "minimal";
+  if (typeof value !== "string" || !DETAIL_LEVELS.has(value)) {
+    throw new RangeError("detail 必须是 minimal、compact 或 full。");
   }
   return value;
 }

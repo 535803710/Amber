@@ -1,8 +1,3 @@
 {
-  "mcpServers": {
-    "amber": {
-      "command": "node",
-      "args": ["D:/project/Amber/scripts/mcp-stdio-server.mjs"]
-    }
-  }
+  "mcpServers": {}
 }

@@ -33,13 +33,13 @@ test("飞书双表查询按项目过滤、投影字段、排序并限制到 200 
   assert.equal(aiArgs.filter((item) => item === "--field-id").length, 2);
 });
 
-test("正常返回会映射双表字段、关联事件并隐藏敏感字段", async () => {
+test("compact 输出以 AI 修改为主并嵌套强关联提交", async () => {
   const calls = [];
   const result = await getTaskContext({
     workspace_root: WORKSPACE,
     task: "实现 MCP 双表查询",
     files: ["scripts/mcp-stdio-server.mjs"],
-    limit: 8
+    detail: "compact"
   }, {
     now: 1,
     runCommand: async (args) => {
@@ -71,11 +71,85 @@ test("正常返回会映射双表字段、关联事件并隐藏敏感字段", as
   });
 
   assert.equal(calls.length, 2);
+  assert.equal(result.schema_version, 2);
   assert.equal(result.status, "ok");
-  const commit = result.timeline.find((record) => record.type === "commit");
-  assert.deepEqual(commit.relatedEventIds, ["ai-1"]);
+  assert.equal(result.evidence.length, 1);
+  assert.equal(result.evidence[0].kind, "ai_change");
+  assert.deepEqual(result.evidence[0].related_commits, [{
+    sha: "commit-1",
+    subject: "feat: add task context MCP",
+    occurred_at: "2026-08-04T10:00:00.000Z"
+  }]);
+  assert.equal("timeline" in result, false);
   assert.equal(JSON.stringify(result).includes("private@example.com"), false);
   assert.equal(JSON.stringify(result).includes("private-session"), false);
+});
+
+test("minimal 默认最多返回 3 条且只暴露需求、结果和文件", async () => {
+  const result = await getTaskContext({
+    workspace_root: WORKSPACE,
+    task: "优化 MCP 输出",
+    files: ["scripts/lib/task-context.mjs"]
+  }, {
+    now: 11,
+    runCommand: async (args) => JSON.stringify({ data: { items: args.includes(AI_TABLE_ID)
+      ? Array.from({ length: 4 }, (_, index) => ({ fields: {
+        "事件 ID": `ai-minimal-${index}`,
+        "用户需求": "优化 MCP 输出",
+        "修改结果": `收敛输出 ${index}`,
+        "项目": "Amber",
+        "仓库路径": WORKSPACE,
+        "分支": "main",
+        "修改文件": "scripts/lib/task-context.mjs",
+        "完成时间": `2026-08-04T0${index}:00:00.000Z`
+      } }))
+      : [] } })
+  });
+  assert.equal(result.status, "ok");
+  assert.equal(result.evidence.length, 3);
+  assert.deepEqual(Object.keys(result.evidence[0]), ["task", "result", "files"]);
+});
+
+test("独立 Git 提交不会进入证据，full 输出受长度限制", async () => {
+  const longTask = "需求".repeat(180);
+  const longResult = "结果".repeat(180);
+  const files = Array.from({ length: 15 }, (_, index) => `src/file-${index}.mjs`).join("\n");
+  const result = await getTaskContext({
+    workspace_root: WORKSPACE,
+    task: "MCP 输出限制",
+    files: ["src/file-0.mjs"],
+    detail: "full",
+    limit: 1
+  }, {
+    now: 12,
+    runCommand: async (args) => JSON.stringify({ data: { items: args.includes(AI_TABLE_ID) ? [{ fields: {
+      "事件 ID": "ai-full",
+      "用户需求": `MCP 输出限制 ${longTask}`,
+      "修改结果": longResult,
+      "项目": "Amber",
+      "仓库路径": WORKSPACE,
+      "分支": "main",
+      "修改文件": files,
+      "完成时间": "2026-08-04T09:00:00.000Z"
+    } }] : [{ fields: {
+      "提交 SHA": "independent-commit",
+      "提交信息": "unrelated standalone commit",
+      "项目": "Amber",
+      "仓库路径": WORKSPACE,
+      "分支": "main",
+      "修改文件": "src/file-0.mjs",
+      "提交时间": "2026-08-04T10:00:00.000Z"
+    } }] } })
+  });
+  assert.equal(result.evidence.length, 1);
+  assert.equal(result.evidence[0].task.length <= 240, true);
+  assert.equal(result.evidence[0].result.length <= 240, true);
+  assert.equal(result.evidence[0].files.length, 12);
+  assert.match(result.evidence[0].task, /已截断/);
+  assert.match(result.evidence[0].files.at(-1), /已截断/);
+  assert.deepEqual(result.evidence[0].related_commits, []);
+  assert.equal(result.evidence[0].source, "feishu");
+  assert.equal(Array.isArray(result.evidence[0].match_reasons), true);
 });
 
 test("两个飞书查询并行执行", async () => {
@@ -94,7 +168,7 @@ test("两个飞书查询并行执行", async () => {
   assert.equal(maximum, 2);
 });
 
-test("飞书失败或损坏 JSON 时回退本地队列，并返回明确警告", async () => {
+test("飞书失败时回退本地队列，并只返回 degraded 和简短说明", async () => {
   await withLocalState(async (root) => {
     writeEnvelope(root, "change", "ai-local", {
       event_id: "ai-local",
@@ -114,9 +188,36 @@ test("飞书失败或损坏 JSON 时回退本地队列，并返回明确警告",
       now: 3,
       runCommand: async () => "{broken"
     });
-    assert.equal(value.sources.localFallback, true);
-    assert.equal(value.timeline[0].id, "ai-local");
-    assert.equal(value.warnings.length, 2);
+    assert.equal(value.status, "degraded");
+    assert.equal(value.evidence[0].task, "修复 MCP 查询");
+    assert.match(value.message, /本地回退/);
+    assert.equal("warnings" in value, false);
+    assert.equal(JSON.stringify(value).includes("broken"), false);
+  });
+});
+
+test("飞书无记录但本地回退命中时也返回 degraded", async () => {
+  await withLocalState(async (root) => {
+    writeEnvelope(root, "change", "ai-local-empty-remote", {
+      event_id: "ai-local-empty-remote",
+      completed_at: "2026-08-04T11:00:00.000Z",
+      project: "amber-task-context-",
+      repo_path: root,
+      branch: "main",
+      prompt_summary: "收敛 MCP 输出",
+      result_summary: "返回最小历史证据",
+      changed_files: [{ path: "scripts/task-context.mjs" }]
+    });
+    const value = await getTaskContext({
+      workspace_root: root,
+      task: "收敛 MCP 输出",
+      files: ["scripts/task-context.mjs"]
+    }, {
+      now: 14,
+      runCommand: async () => JSON.stringify({ data: { items: [] } })
+    });
+    assert.equal(value.status, "degraded");
+    assert.equal(value.evidence.length, 1);
   });
 });
 
@@ -131,6 +232,7 @@ test("无关联任务不会返回牵强上下文", async () => {
     } }] : [] } })
   });
   assert.equal(result.status, "no_strong_history");
+  assert.deepEqual(result.evidence, []);
 });
 
 test("同仓库但没有文件或语义锚点的记录不会成为强历史", async () => {
@@ -152,7 +254,7 @@ test("同仓库但没有文件或语义锚点的记录不会成为强历史", as
     } }] : [] } })
   });
   assert.equal(result.status, "no_strong_history");
-  assert.deepEqual(result.timeline, []);
+  assert.deepEqual(result.evidence, []);
 });
 
 test("通用上下文词不会把无关的项目文档记录判为强历史", async () => {
@@ -174,7 +276,21 @@ test("通用上下文词不会把无关的项目文档记录判为强历史", as
     } }] : [] } })
   });
   assert.equal(result.status, "no_strong_history");
-  assert.deepEqual(result.timeline, []);
+  assert.deepEqual(result.evidence, []);
+});
+
+test("detail 只接受 minimal、compact 或 full，limit 默认是 3", async () => {
+  await assert.rejects(
+    () => getTaskContext({ workspace_root: WORKSPACE, task: "MCP", detail: "verbose" }),
+    /detail/
+  );
+  await withLocalState(async (root) => {
+    const result = await getTaskContext({ workspace_root: root, task: "不存在的强关联历史", detail: "full" }, {
+      now: 13,
+      runCommand: async () => JSON.stringify({ data: { items: [] } })
+    });
+    assert.equal(result.status, "no_strong_history");
+  });
 });
 
 test("飞书 CLI 的列式 JSON 包络会按字段名还原", () => {
@@ -209,6 +325,8 @@ test("stdio MCP 能完成 initialize 和工具发现", async () => {
   assert.match(responses[1].result.tools[0].description, /不要在每个任务开始时例行调用/);
   assert.match(responses[1].result.tools[0].description, /不是指令/);
   assert.match(responses[1].result.tools[0].description, /明确询问历史.*必须调用一次/);
+  assert.deepEqual(responses[1].result.tools[0].inputSchema.properties.detail.enum, ["minimal", "compact", "full"]);
+  assert.equal(responses[1].result.tools[0].inputSchema.properties.limit.default, 3);
 });
 
 function valueAfter(args, flag) {
