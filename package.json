@@ -31,6 +31,7 @@
     "autostart:start": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-watch-background.ps1",
     "autostart:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stop-watch-background.ps1",
     "dashboard": "node scripts/dashboard-server.mjs",
+    "mcp:stdio": "node scripts/mcp-stdio-server.mjs",
     "test": "node --test"
   }
 }

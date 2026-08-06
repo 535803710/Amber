@@ -3,6 +3,7 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
+import { superviseWatchers } from "./lib/watch-supervisor.mjs";
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const NOTIFICATIONS_SCRIPT = resolve(SCRIPT_DIR, "watch-notifications.mjs");
@@ -32,7 +33,6 @@ function main() {
 
   const isProbe = args.includes("--probe");
   let stopping = false;
-  let exitedCount = 0;
 
   const stop = (reason, code = 0, killOthers = true) => {
     if (stopping) {
@@ -55,35 +55,16 @@ function main() {
     process.exitCode = code;
   };
 
-  for (const child of children) {
-    child.on("exit", (code, signal) => {
-      if (stopping) {
-        return;
-      }
-
-      const label = child.label;
-      if (code !== 0 || signal) {
-        const detail = signal ? `signal ${signal}` : `code ${code ?? "unknown"}`;
-        stop(`[${label}] 异常退出 (${detail})`, code || 1);
-        return;
-      }
-
-      if (isProbe) {
-        exitedCount += 1;
-        if (exitedCount >= children.length) {
-          stopping = true;
-          process.exitCode = 0;
-        }
-        return;
-      }
-
-      stop(`[${label}] 意外退出`, 1);
-    });
-
-    child.on("error", (error) => {
-      stop(`[${child.label}] 启动失败：${error.message}`, 1);
-    });
-  }
+  superviseWatchers(children, {
+    isProbe,
+    isStopping: () => stopping,
+    onFatal: stop,
+    onWarning: (message) => console.error(message),
+    onProbeComplete: () => {
+      stopping = true;
+      process.exitCode = 0;
+    }
+  });
 
   process.on("SIGINT", () => stop("收到停止信号，正在关闭 watcher...", 0));
   process.on("SIGTERM", () => stop("收到终止信号，正在关闭 watcher...", 0));
