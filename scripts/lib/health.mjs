@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { getChangeRecordStatus } from "./change-records.mjs";
 import { getCommitRecordStatus } from "./commit-records.mjs";
 import { readSettings } from "./settings.mjs";
+import { readMetricsSummary } from "./task-context/metrics.mjs";
 
 export const DEFAULT_HEALTH_THRESHOLDS = Object.freeze({
   checkIntervalMs: 30_000,
@@ -35,6 +36,7 @@ export function collectHealthSnapshot({
   const scannerState = readJson(resolve(root, ".local/commit-records/scanner-state.json")) || {};
   const hooks = collectHookHealth(root, now);
   const runtimeState = runtime || collectRuntimeHealth(root);
+  const taskContext = readMetricsSummary(root, now);
 
   return {
     now,
@@ -57,6 +59,18 @@ export function collectHealthSnapshot({
       ...commitStatus,
       oldestPendingAt: commitQueue.oldestPendingAt,
       oldestProcessingAt: commitQueue.oldestProcessingAt
+    },
+    taskContext: {
+      callCount: taskContext.callCount,
+      p50Ms: taskContext.p50Ms,
+      p95Ms: taskContext.p95Ms,
+      cacheHitRate: taskContext.cacheHitRate,
+      timeoutRate: taskContext.timeoutRate,
+      errorRate: taskContext.errorRate,
+      adaptiveUpgradeCount: taskContext.adaptiveUpgradeCount,
+      adaptiveUpgradeRate: taskContext.adaptiveUpgradeRate,
+      remoteCalls: taskContext.remoteCalls,
+      lastCalledAt: taskContext.lastCalledAt
     },
     alertChannel: {
       configured: Boolean(String(env.FEISHU_WEBHOOK_URL || "").trim()),
@@ -130,6 +144,7 @@ export function evaluateHealth(snapshot = {}, options = {}) {
     gitScan: component("gitScan", snapshot.gitScan),
     aiDelivery: component("aiDelivery", snapshot.aiDelivery),
     gitDelivery: component("gitDelivery", snapshot.gitDelivery),
+    taskContext: component("taskContext", snapshot.taskContext),
     alertChannel: component("alertChannel", snapshot.alertChannel)
   };
 
@@ -140,6 +155,7 @@ export function evaluateHealth(snapshot = {}, options = {}) {
   evaluateDelivery("ai", components.aiDelivery, snapshot.aiDelivery || {}, issues, now, thresholds);
   evaluateDelivery("git", components.gitDelivery, snapshot.gitDelivery || {}, issues, now, thresholds);
   evaluateGitScan(components.gitScan, snapshot.gitScan || {}, issues, now, thresholds, startupGraceActive);
+  evaluateTaskContext(components.taskContext, snapshot.taskContext || {}, issues, now, thresholds);
   components.alertChannel.status = snapshot.alertChannel?.configured && snapshot.alertChannel?.enabled !== false
     ? "healthy"
     : "disabled";
@@ -330,6 +346,44 @@ function evaluateGitScan(target, scan, issues, now, thresholds, startupGraceActi
       `Git 扫描有 ${target.details.repositoryErrors.length} 个仓库失败`,
       now,
       scan.repositoryErrorsAt
+    ));
+  }
+}
+
+function evaluateTaskContext(target, metrics, issues, now, thresholds) {
+  target.details = {
+    callCount: metrics.callCount || 0,
+    p50Ms: metrics.p50Ms || 0,
+    p95Ms: metrics.p95Ms || 0,
+    cacheHitRate: metrics.cacheHitRate || 0,
+    timeoutRate: metrics.timeoutRate || 0,
+    errorRate: metrics.errorRate || 0,
+    adaptiveUpgradeCount: metrics.adaptiveUpgradeCount || 0,
+    adaptiveUpgradeRate: metrics.adaptiveUpgradeRate || 0,
+    remoteCalls: metrics.remoteCalls || 0,
+    lastCalledAt: metrics.lastCalledAt || null
+  };
+  target.status = target.details.callCount > 0 ? "healthy" : "disabled";
+  if (target.details.callCount === 0) return;
+
+  if (target.details.timeoutRate >= 0.05) {
+    issues.push(issue(
+      "task_context_timeout_rate",
+      target.key,
+      "warning",
+      `MCP 调用超时率为 ${Math.round(target.details.timeoutRate * 100)}%`,
+      now,
+      target.details.lastCalledAt
+    ));
+  }
+  if (target.details.errorRate >= 0.1) {
+    issues.push(issue(
+      "task_context_error_rate",
+      target.key,
+      "warning",
+      `MCP 调用错误率为 ${Math.round(target.details.errorRate * 100)}%`,
+      now,
+      target.details.lastCalledAt
     ));
   }
 }

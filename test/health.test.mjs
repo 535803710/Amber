@@ -188,6 +188,46 @@ test("health snapshot tolerates corrupt queue and hook health lines", () => {
   assert.equal(snapshot.hooks.ChatGPT.lastBeginAt, "2026-08-01T11:58:00.000Z");
 });
 
+test("health snapshot exposes MCP task-context metrics", () => {
+  const root = mkdtempSync(resolve(tmpdir(), "amber-health-mcp-"));
+  const local = resolve(root, ".local");
+  mkdirSync(local, { recursive: true });
+  writeFileSync(resolve(local, "mcp-metrics.ndjson"), [
+    JSON.stringify({
+      at: NOW - 200,
+      durationMs: 100,
+      cacheHit: false,
+      adaptiveUpgrade: true,
+      remoteCalls: 1,
+      timedOut: false,
+      isError: false
+    }),
+    JSON.stringify({
+      at: NOW - 100,
+      durationMs: 300,
+      cacheHit: true,
+      remoteCalls: 0,
+      timedOut: true,
+      isError: false
+    })
+  ].join("\n"), "utf8");
+
+  const snapshot = collectHealthSnapshot({
+    rootDir: root,
+    now: NOW,
+    env: { FEISHU_WEBHOOK_URL: "", COMMIT_RECORD_SCAN_ROOTS: "" },
+    runtime: { expectedRunning: false, running: false }
+  });
+  const health = evaluateHealth(snapshot, { now: NOW });
+
+  assert.equal(snapshot.taskContext.callCount, 2);
+  assert.equal(snapshot.taskContext.cacheHitRate, 0.5);
+  assert.equal(snapshot.taskContext.adaptiveUpgradeCount, 1);
+  assert.equal(snapshot.taskContext.adaptiveUpgradeRate, 0.5);
+  assert.equal(snapshot.taskContext.remoteCalls, 1);
+  assert.equal(health.issues.some((issue) => issue.id === "task_context_timeout_rate"), true);
+});
+
 test("health status check persists a snapshot without creating runtime expectation", async () => {
   const root = mkdtempSync(resolve(tmpdir(), "amber-health-status-"));
   const result = await runHealthCheck({

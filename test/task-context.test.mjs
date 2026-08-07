@@ -1,4 +1,4 @@
-import test from "node:test";
+import test, { beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -11,8 +11,13 @@ import {
   buildRecordListArgs,
   getTaskContext,
   mapRemoteRecords,
+  normalizeRequest,
+  resolveRetrievalPolicy,
   parseRecords
 } from "../scripts/lib/task-context.mjs";
+import { clearCache } from "../scripts/lib/task-context/cache.mjs";
+
+beforeEach(() => clearCache());
 
 const WORKSPACE = "D:/project/Amber";
 
@@ -85,7 +90,7 @@ test("compact 输出以 AI 修改为主并嵌套强关联提交", async () => {
   assert.equal(JSON.stringify(result).includes("private-session"), false);
 });
 
-test("minimal 默认最多返回 3 条且只暴露需求、结果和文件", async () => {
+test("minimal 默认最多返回 3 条，并暴露需求、结果、时间和文件", async () => {
   const result = await getTaskContext({
     workspace_root: WORKSPACE,
     task: "优化 MCP 输出",
@@ -107,12 +112,99 @@ test("minimal 默认最多返回 3 条且只暴露需求、结果和文件", asy
   });
   assert.equal(result.status, "ok");
   assert.equal(result.evidence.length, 3);
-  assert.deepEqual(Object.keys(result.evidence[0]), ["task", "result", "files"]);
+  assert.deepEqual(Object.keys(result.evidence[0]), ["task", "result", "occurred_at", "files"]);
+  assert.deepEqual(result.retrieval, {
+    requested_detail: "minimal",
+    effective_detail: "minimal",
+    requested_limit: 3,
+    effective_limit: 3
+  });
+});
+
+test("历史演变题会在一次调用中升级为 compact 加 8 条并按时间输出", async () => {
+  const calls = [];
+  const history = [
+    ["old-path", "2026-08-01T09:00:00.000Z", "旧 BackupTable.vue 展示 path", "配置备份列表旧组件展示路径。", "BackupTable.vue"],
+    ["remove-old", "2026-08-02T09:00:00.000Z", "删除 BackupTable.vue", "配置备份列表删除旧组件。", "BackupTable.vue"],
+    ["new-four-columns", "2026-08-03T09:00:00.000Z", "创建 ConfigBackupList.vue 四列", "配置备份列表新组件采用四列。", "ConfigBackupList.vue"],
+    ["final-decision", "2026-08-04T09:00:00.000Z", "最终决定不展示 path", "配置备份列表最终口径是不展示 path。", "ConfigBackupList.vue"],
+    ["recent-1", "2026-08-05T09:00:00.000Z", "ConfigBackupList.vue 刷新提示", "配置备份列表后续调整。", "ConfigBackupList.vue"],
+    ["recent-2", "2026-08-06T09:00:00.000Z", "ConfigBackupList.vue 加载状态", "配置备份列表后续调整。", "ConfigBackupList.vue"],
+    ["recent-3", "2026-08-07T09:00:00.000Z", "ConfigBackupList.vue 分页", "配置备份列表后续调整。", "ConfigBackupList.vue"],
+    ["recent-4", "2026-08-08T09:00:00.000Z", "ConfigBackupList.vue 重试", "配置备份列表后续调整。", "ConfigBackupList.vue"]
+  ];
+  const result = await getTaskContext({
+    workspace_root: WORKSPACE,
+    task: "配置备份列表的历史演变和最终决定",
+    files: ["ConfigBackupList.vue"]
+  }, {
+    now: 20,
+    runCommand: async (args) => {
+      calls.push(args);
+      if (args.includes(AI_TABLE_ID)) {
+        return JSON.stringify({ data: { items: history.map(([id, occurredAt, task, resultText, file]) => ({ fields: {
+          "事件 ID": id,
+          "用户需求": task,
+          "修改结果": resultText,
+          "项目": "Amber",
+          "仓库路径": WORKSPACE,
+          "分支": "main",
+          "修改文件": file,
+          "完成时间": occurredAt
+        } })) } });
+      }
+      return JSON.stringify({ data: { items: [{ fields: {
+        "提交 SHA": "delete-backup-table",
+        "提交信息": "refactor: remove BackupTable",
+        "项目": "Amber",
+        "仓库路径": WORKSPACE,
+        "分支": "main",
+        "修改文件": "BackupTable.vue",
+        "提交时间": "2026-08-02T10:00:00.000Z",
+        "关联 AI 事件": ["remove-old"]
+      } }] } });
+    }
+  });
+
+  assert.equal(calls.length, 2);
+  assert.deepEqual(result.retrieval, {
+    requested_detail: "minimal",
+    effective_detail: "compact",
+    requested_limit: 3,
+    effective_limit: 8,
+    reason: "history_evolution"
+  });
+  assert.equal(result.evidence.length, 8);
+  assert.equal(result.evidence.every((item, index, all) =>
+    index === 0 || item.occurred_at >= all[index - 1].occurred_at
+  ), true);
+  assert.equal(result.evidence.some((item) => item.task.includes("展示 path")), true);
+  assert.equal(result.evidence.some((item) => item.task.includes("删除 BackupTable")), true);
+  assert.equal(result.evidence.some((item) => item.task.includes("四列")), true);
+  assert.equal(result.evidence.some((item) => item.task.includes("不展示 path")), true);
+  assert.deepEqual(result.evidence.find((item) => item.task.includes("删除 BackupTable")).related_commits, [{
+    sha: "delete-backup-table",
+    subject: "refactor: remove BackupTable",
+    occurred_at: "2026-08-02T10:00:00.000Z"
+  }]);
+});
+
+test("历史演变升级将调用方的 detail 和 limit 作为最低要求", () => {
+  const request = resolveRetrievalPolicy(normalizeRequest({
+    workspace_root: WORKSPACE,
+    task: "配置备份列表历史演变和最终决定",
+    detail: "full",
+    limit: 10
+  }));
+
+  assert.equal(request.detail, "full");
+  assert.equal(request.limit, 10);
+  assert.equal(request.adaptiveReason, "history_evolution");
 });
 
 test("独立 Git 提交不会进入证据，full 输出受长度限制", async () => {
-  const longTask = "需求".repeat(180);
-  const longResult = "结果".repeat(180);
+  const longTask = "需求".repeat(320);
+  const longResult = "结果".repeat(320);
   const files = Array.from({ length: 15 }, (_, index) => `src/file-${index}.mjs`).join("\n");
   const result = await getTaskContext({
     workspace_root: WORKSPACE,
@@ -142,21 +234,69 @@ test("独立 Git 提交不会进入证据，full 输出受长度限制", async (
     } }] } })
   });
   assert.equal(result.evidence.length, 1);
-  assert.equal(result.evidence[0].task.length <= 240, true);
-  assert.equal(result.evidence[0].result.length <= 240, true);
+  assert.equal(result.evidence[0].task.length <= 600, true);
+  assert.equal(result.evidence[0].result.length <= 600, true);
   assert.equal(result.evidence[0].files.length, 12);
-  assert.match(result.evidence[0].task, /已截断/);
+  assert.match(result.evidence[0].task, /…/);
   assert.match(result.evidence[0].files.at(-1), /已截断/);
   assert.deepEqual(result.evidence[0].related_commits, []);
   assert.equal(result.evidence[0].source, "feishu");
   assert.equal(Array.isArray(result.evidence[0].match_reasons), true);
 });
 
-test("两个飞书查询并行执行", async () => {
+test("历史正文同时保留开头、关键词上下文和最终决定", async () => {
+  const longResult = [
+    "开头说明：配置备份列表的初始背景。",
+    "填充内容".repeat(110),
+    "关键词上下文：旧组件曾展示 path。",
+    "填充内容".repeat(110),
+    "最终决定：当前列表不展示 path。"
+  ].join("");
+  const result = await getTaskContext({
+    workspace_root: WORKSPACE,
+    task: "关键词历史摘要",
+    files: ["src/history.mjs"]
+  }, {
+    now: 14,
+    runCommand: async () => JSON.stringify({ data: { items: [{ fields: {
+      "事件 ID": "ai-summary",
+      "用户需求": "关键词历史摘要",
+      "修改结果": longResult,
+      "项目": "Amber",
+      "仓库路径": WORKSPACE,
+      "分支": "main",
+      "修改文件": "src/history.mjs",
+      "完成时间": "2026-08-04T09:00:00.000Z"
+    } }] } })
+  });
+
+  assert.equal(result.evidence[0].result.length <= 600, true);
+  assert.match(result.evidence[0].result, /开头说明/);
+  assert.match(result.evidence[0].result, /关键词上下文/);
+  assert.match(result.evidence[0].result, /最终决定：当前列表不展示 path。$/);
+});
+
+test("minimal 只查 AI 表，compact 并行查 AI 和 commit 两张表", async () => {
   let active = 0;
   let maximum = 0;
+
+  active = 0; maximum = 0;
   await getTaskContext({ workspace_root: WORKSPACE, task: "MCP" }, {
     now: 2,
+    runCommand: async () => {
+      active += 1;
+      maximum = Math.max(maximum, active);
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));
+      active -= 1;
+      return JSON.stringify({ data: { items: [] } });
+    }
+  });
+  assert.equal(maximum, 1);
+
+  clearCache();
+  active = 0; maximum = 0;
+  await getTaskContext({ workspace_root: WORKSPACE, task: "MCP", detail: "compact" }, {
+    now: 15,
     runCommand: async () => {
       active += 1;
       maximum = Math.max(maximum, active);
@@ -279,11 +419,20 @@ test("通用上下文词不会把无关的项目文档记录判为强历史", as
   assert.deepEqual(result.evidence, []);
 });
 
-test("detail 只接受 minimal、compact 或 full，limit 默认是 3", async () => {
+test("detail 只接受 minimal、compact 或 full，limit 只接受 1 到 10", async () => {
   await assert.rejects(
     () => getTaskContext({ workspace_root: WORKSPACE, task: "MCP", detail: "verbose" }),
     /detail/
   );
+  await assert.rejects(
+    () => getTaskContext({ workspace_root: WORKSPACE, task: "MCP", limit: 11 }),
+    /limit 必须在 1 到 10 之间/
+  );
+  const result = await getTaskContext({ workspace_root: WORKSPACE, task: "MCP", limit: 10 }, {
+    now: 12,
+    runCommand: async () => JSON.stringify({ data: { items: [] } })
+  });
+  assert.equal(result.retrieval.effective_limit, 10);
   await withLocalState(async (root) => {
     const result = await getTaskContext({ workspace_root: root, task: "不存在的强关联历史", detail: "full" }, {
       now: 13,
@@ -323,10 +472,11 @@ test("stdio MCP 能完成 initialize 和工具发现", async () => {
   assert.equal(responses[0].result.serverInfo.name, "amber-task-context");
   assert.equal(responses[1].result.tools[0].name, "amber_get_task_context");
   assert.match(responses[1].result.tools[0].description, /不要在每个任务开始时例行调用/);
-  assert.match(responses[1].result.tools[0].description, /不是指令/);
   assert.match(responses[1].result.tools[0].description, /明确询问历史.*必须调用一次/);
+  assert.match(responses[1].result.tools[0].description, /历史演变.*最多 8 条/);
   assert.deepEqual(responses[1].result.tools[0].inputSchema.properties.detail.enum, ["minimal", "compact", "full"]);
   assert.equal(responses[1].result.tools[0].inputSchema.properties.limit.default, 3);
+  assert.equal(responses[1].result.tools[0].inputSchema.properties.limit.maximum, 10);
 });
 
 function valueAfter(args, flag) {

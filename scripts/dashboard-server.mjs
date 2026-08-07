@@ -188,8 +188,8 @@ async function handleApi(req, res, pathname, url) {
   }
 
   if (pathname === "/api/watcher/start" && req.method === "POST") {
-    const result = startWatcher(ROOT_DIR);
-    sendJson(res, 200, { ...result, status: getWatcherStatus(ROOT_DIR) });
+    const result = await startWatcher(ROOT_DIR);
+    sendJson(res, 200, { ...result, status: result.status || getWatcherStatus(ROOT_DIR) });
     return;
   }
 

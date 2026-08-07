@@ -224,6 +224,8 @@ const I18N = {
     healthGitScan: "Git scan",
     healthAiDelivery: "AI delivery",
     healthGitDelivery: "Git delivery",
+    healthTaskContext: "MCP queries",
+    healthTaskContextDetail: (details) => `${details.callCount || 0} calls · P50 ${formatDuration(details.p50Ms)} · P95 ${formatDuration(details.p95Ms)} · cache ${formatPercent(details.cacheHitRate)} · remote ${details.remoteCalls || 0} · timeout ${formatPercent(details.timeoutRate)} · errors ${formatPercent(details.errorRate)} · last ${formatTime(details.lastCalledAt)}`,
     healthAlertChannel: "alert channel",
     healthAlertsOff: "alerts off",
     healthUnknown: "unknown",
@@ -366,6 +368,8 @@ const I18N = {
     healthGitScan: "Git 扫描",
     healthAiDelivery: "AI 投递",
     healthGitDelivery: "Git 投递",
+    healthTaskContext: "MCP 查询",
+    healthTaskContextDetail: (details) => `${details.callCount || 0} 次 · P50 ${formatDuration(details.p50Ms)} · P95 ${formatDuration(details.p95Ms)} · 缓存 ${formatPercent(details.cacheHitRate)} · 远端 ${details.remoteCalls || 0} 次 · 超时 ${formatPercent(details.timeoutRate)} · 错误 ${formatPercent(details.errorRate)} · 最近 ${formatTime(details.lastCalledAt)}`,
     healthAlertChannel: "告警通道",
     healthAlertsOff: "告警已关闭",
     healthUnknown: "未知",
@@ -602,6 +606,15 @@ function formatTime(value) {
   return date.toLocaleString(currentLanguage === "zh" ? "zh-CN" : "en-US");
 }
 
+function formatDuration(value) {
+  const milliseconds = Number(value) || 0;
+  return milliseconds >= 1_000 ? `${(milliseconds / 1_000).toFixed(1)}s` : `${Math.round(milliseconds)}ms`;
+}
+
+function formatPercent(value) {
+  return `${Math.round((Number(value) || 0) * 100)}%`;
+}
+
 function renderState(state) {
   latestState = state;
   const running = state.watcher?.running;
@@ -680,6 +693,7 @@ function renderHealth(health) {
     gitScan: "healthGitScan",
     aiDelivery: "healthAiDelivery",
     gitDelivery: "healthGitDelivery",
+    taskContext: "healthTaskContext",
     alertChannel: "healthAlertChannel"
   };
   const statusLabels = {
@@ -758,6 +772,9 @@ function healthDetail(key, details) {
   }
   if (key === "gitScan") {
     return `${details.repositoryCount || 0} repos · ${formatTime(details.lastScanAt)}`;
+  }
+  if (key === "taskContext") {
+    return t("healthTaskContextDetail", details);
   }
   if (key === "alertChannel") {
     if (details.enabled === false) return t("healthAlertsOff");

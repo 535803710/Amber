@@ -6,6 +6,7 @@ import { spawn, spawnSync } from "node:child_process";
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const STACK_SCRIPT = resolve(SCRIPT_DIR, "../start-watch-stack.mjs");
 const WINDOWS_BACKGROUND_SCRIPT = resolve(SCRIPT_DIR, "../start-watch-background.ps1");
+let startInFlight = null;
 
 export function getWatcherPaths(rootDir = process.cwd()) {
   const localDir = resolve(rootDir, ".local");
@@ -35,8 +36,20 @@ export function getWatcherStatus(rootDir = process.cwd()) {
   };
 }
 
-export function startWatcher(rootDir = process.cwd()) {
-  const status = getWatcherStatus(rootDir);
+export function startWatcher(rootDir = process.cwd(), options = {}) {
+  if (startInFlight) {
+    return startInFlight;
+  }
+
+  const operation = startWatcherOnce(rootDir, options);
+  startInFlight = operation;
+  operation.then(clearStartInFlight, clearStartInFlight);
+  return operation;
+}
+
+async function startWatcherOnce(rootDir, options) {
+  const getStatus = options.getStatus || (() => getWatcherStatus(rootDir));
+  const status = getStatus();
   if (status.running && status.healthRunning) {
     return { ok: true, alreadyRunning: true, pid: status.pid };
   }
@@ -47,19 +60,62 @@ export function startWatcher(rootDir = process.cwd()) {
 
   const { logFile } = getWatcherPaths(rootDir);
   mkdirSync(dirname(logFile), { recursive: true });
-  const { command, args } = resolveWatcherStartCommand(process.platform);
-  const child = spawn(command, args, {
+  const { command, args } = resolveWatcherStartCommand(options.platform || process.platform);
+  appendLog(logFile, "starting stack launcher");
+
+  let launcher;
+  try {
+    launcher = options.launchWatcher
+      ? options.launchWatcher(command, args)
+      : runLauncher(command, args, {
+          rootDir,
+          spawnProcess: options.spawnProcess || spawn
+        });
+    const finalStatus = await Promise.race([
+      waitForWatcherStart({
+        getStatus,
+        timeoutMs: options.timeoutMs,
+        pollIntervalMs: options.pollIntervalMs
+      }),
+      launcher.failure
+    ]);
+    launcher.stop();
+    appendLog(logFile, `stack launcher completed pid=${launcher.pid}`);
+    return { ok: true, pid: finalStatus.pid, started: true, status: finalStatus };
+  } catch (error) {
+    launcher?.stop();
+    appendLog(logFile, `stack launcher failed: ${String(error?.message || error).slice(0, 500)}`);
+    throw error;
+  }
+}
+
+function runLauncher(command, args, { rootDir, spawnProcess }) {
+  const child = spawnProcess(command, args, {
     cwd: rootDir,
-    detached: true,
-    stdio: "ignore",
+    detached: false,
+    stdio: ["ignore", "ignore", "pipe"],
     shell: false,
     windowsHide: true
   });
-
-  child.unref();
-  appendLog(logFile, `started stack launcher pid=${child.pid}`);
-
-  return { ok: true, pid: child.pid, starting: true };
+  let stderr = "";
+  let closed = false;
+  child.stderr?.on("data", (chunk) => { stderr += chunk; });
+  const failure = new Promise((resolvePromise, reject) => {
+    child.once("error", reject);
+    child.once("close", (code, signal) => {
+      closed = true;
+      if (code === 0 && !signal) return;
+      const detail = stderr.trim() || (signal ? `signal ${signal}` : `exit code ${code}`);
+      reject(new Error(`监听服务启动脚本失败：${detail.slice(0, 500)}`));
+    });
+  });
+  return {
+    pid: child.pid,
+    failure,
+    stop: () => {
+      if (!closed) child.kill();
+    }
+  };
 }
 
 export function resolveWatcherStartCommand(platform = process.platform) {
@@ -69,6 +125,23 @@ export function resolveWatcherStartCommand(platform = process.platform) {
         args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", WINDOWS_BACKGROUND_SCRIPT]
       }
     : { command: process.execPath, args: [STACK_SCRIPT, "--background"] };
+}
+
+export async function waitForWatcherStart({
+  getStatus,
+  timeoutMs = 10_000,
+  pollIntervalMs = 100,
+  sleep = delay
+}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() <= deadline) {
+    const status = getStatus();
+    if (status.running && status.healthRunning) {
+      return status;
+    }
+    await sleep(pollIntervalMs);
+  }
+  throw new Error("监听服务启动后未进入运行状态，请查看 .local/start-watch.log。");
 }
 
 export function stopWatcher(rootDir = process.cwd()) {
@@ -168,4 +241,12 @@ function cleanupPidFile(rootDir) {
 function appendLog(logFile, message) {
   const line = `[${new Date().toISOString()}] ${message}\n`;
   writeFileSync(logFile, line, { flag: "a" });
+}
+
+function delay(milliseconds) {
+  return new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
+}
+
+function clearStartInFlight() {
+  startInFlight = null;
 }

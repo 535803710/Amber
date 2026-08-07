@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="琥珀计划第三阶段 Amber MCP 三轮双盲测试评分、耗时和结论">
+  <title>琥珀计划第三阶段 · MCP 三轮双盲测试报告</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f3efe7;
+      --panel: #fffdf8;
+      --panel-soft: #f8f3e9;
+      --text: #292722;
+      --muted: #777168;
+      --line: #ddd5c7;
+      --amber: #b85f36;
+      --amber-dark: #8d3f24;
+      --amber-soft: #f5dfd1;
+      --green: #34745a;
+      --green-soft: #e0eee7;
+      --blue: #476a8d;
+      --blue-soft: #e4edf5;
+      --shadow: 0 18px 48px rgba(58, 45, 30, 0.08);
+      --radius: 18px;
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", "Microsoft YaHei UI", sans-serif;
+      --serif: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "SimSun", serif;
+      --mono: "Cascadia Mono", "Consolas", "SFMono-Regular", monospace;
+    }
+
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #181613;
+      --panel: #211e1a;
+      --panel-soft: #29241e;
+      --text: #eee8dd;
+      --muted: #aaa196;
+      --line: #3c362e;
+      --amber: #e18a61;
+      --amber-dark: #f0a17b;
+      --amber-soft: rgba(225, 138, 97, 0.15);
+      --green: #74b998;
+      --green-soft: rgba(116, 185, 152, 0.14);
+      --blue: #8db4d7;
+      --blue-soft: rgba(141, 180, 215, 0.14);
+      --shadow: 0 18px 48px rgba(0, 0, 0, 0.22);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--text);
+      background: radial-gradient(circle at 8% 0%, color-mix(in srgb, var(--amber), transparent 89%), transparent 32rem), var(--bg);
+      font-family: var(--sans);
+      line-height: 1.7;
+    }
+    body::before {
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      content: "";
+      background-image: linear-gradient(color-mix(in srgb, var(--amber), transparent 95%) 1px, transparent 1px), linear-gradient(90deg, color-mix(in srgb, var(--amber), transparent 96%) 1px, transparent 1px);
+      background-size: 28px 28px;
+      mask-image: linear-gradient(to bottom, black, transparent 76%);
+    }
+    a { color: var(--amber-dark); text-underline-offset: 3px; }
+    button { font: inherit; }
+    .page { width: min(1180px, calc(100% - 36px)); margin: 0 auto; padding: 28px 0 70px; }
+    .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; color: var(--muted); font: 12px/1.4 var(--mono); }
+    .actions { display: flex; gap: 8px; }
+    .button { border: 1px solid var(--line); border-radius: 999px; padding: 8px 12px; color: var(--text); background: var(--panel); cursor: pointer; }
+    .button:hover { border-color: var(--amber); }
+    .hero { position: relative; overflow: hidden; padding: clamp(28px, 5vw, 56px); border: 1px solid var(--line); border-radius: 24px; background: color-mix(in srgb, var(--panel), transparent 2%); box-shadow: var(--shadow); }
+    .hero::after { position: absolute; top: -110px; right: -80px; width: 330px; height: 330px; border: 54px solid var(--amber-soft); border-radius: 50%; content: ""; }
+    .kicker { position: relative; z-index: 1; margin: 0 0 14px; color: var(--amber); font: 700 12px/1.3 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 { position: relative; z-index: 1; max-width: 820px; margin-bottom: 18px; font: 700 clamp(38px, 6vw, 68px)/1.08 var(--serif); letter-spacing: -0.045em; }
+    h2 { margin-bottom: 0; font: 700 clamp(26px, 4vw, 38px)/1.2 var(--serif); letter-spacing: -0.025em; }
+    h3 { margin-bottom: 10px; font-size: 18px; line-height: 1.35; }
+    .hero-copy { position: relative; z-index: 1; max-width: 780px; margin: 0; color: var(--muted); font-size: clamp(16px, 2vw, 19px); }
+    .verdict { display: grid; grid-template-columns: auto 1fr; gap: 18px; align-items: start; margin-top: 24px; padding: 20px 22px; border: 1px solid color-mix(in srgb, var(--green), var(--line) 58%); border-radius: 14px; background: var(--green-soft); }
+    .verdict-mark { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 50%; color: var(--panel); background: var(--green); font: 800 18px var(--mono); }
+    .verdict strong { display: block; margin-bottom: 4px; font-size: 18px; }
+    .verdict p { margin: 0; }
+    .stats, .grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+    .stats { margin: 22px 0; }
+    .stat, .card { border: 1px solid var(--line); background: color-mix(in srgb, var(--panel), transparent 2%); box-shadow: var(--shadow); }
+    .stat { padding: 20px; border-radius: 14px; }
+    .stat-value { margin-bottom: 7px; color: var(--amber-dark); font: 750 clamp(24px, 3vw, 36px)/1 var(--mono); }
+    .stat-label, .section-note, .footnote { color: var(--muted); font-size: 13px; }
+    .section { margin-top: 44px; }
+    .section-heading { display: flex; align-items: end; justify-content: space-between; gap: 18px; margin-bottom: 16px; }
+    .section-note { margin: 0; text-align: right; }
+    .card { padding: 24px; border-radius: var(--radius); }
+    .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+    .phase { border-top: 4px solid var(--line); }
+    .phase.baseline { border-top-color: var(--blue); }
+    .phase.first { border-top-color: var(--amber); }
+    .phase.optimized { border-top-color: var(--green); }
+    .phase-label { color: var(--muted); font: 12px var(--mono); }
+    .phase-score { margin: 10px 0 6px; font: 800 48px/1 var(--mono); }
+    .baseline .phase-score { color: var(--blue); }
+    .first .phase-score { color: var(--amber-dark); }
+    .optimized .phase-score { color: var(--green); }
+    .phase p { margin: 0; color: var(--muted); }
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); box-shadow: var(--shadow); }
+    table { width: 100%; min-width: 820px; border-collapse: collapse; }
+    th, td { padding: 14px 16px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { color: var(--muted); background: var(--panel-soft); font: 700 11px/1.4 var(--mono); letter-spacing: 0.04em; text-transform: uppercase; }
+    td { font-size: 14px; }
+    tr:last-child td { border-bottom: 0; }
+    tbody tr:hover { background: color-mix(in srgb, var(--amber-soft), transparent 45%); }
+    .number { text-align: center; font-family: var(--mono); white-space: nowrap; }
+    .gain { color: var(--green); font-weight: 750; }
+    .cost { color: var(--amber-dark); font-weight: 750; }
+    .tie { color: var(--muted); }
+    .callout { padding: 22px 24px; border-left: 4px solid var(--amber); border-radius: 0 14px 14px 0; background: var(--amber-soft); }
+    .callout p:last-child { margin-bottom: 0; }
+    .boundary-card { border-top: 4px solid var(--green); }
+    .boundary-card.neutral { border-top-color: var(--blue); }
+    .boundary-card ul { margin: 14px 0 0; padding-left: 20px; }
+    .boundary-card li + li { margin-top: 9px; }
+    .source-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+    .footnote { margin-top: 18px; }
+    @media (max-width: 900px) { .stats, .grid-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @media (max-width: 680px) {
+      .page { width: min(100% - 22px, 1180px); padding-top: 14px; }
+      .hero { padding: 24px 20px; }
+      .hero::after { display: none; }
+      .stats, .grid-2, .grid-3 { grid-template-columns: 1fr; }
+      .section-heading { align-items: flex-start; flex-direction: column; }
+      .section-note { text-align: left; }
+      .verdict { grid-template-columns: 1fr; }
+    }
+    @media print {
+      :root { --bg: #fff; --panel: #fff; --panel-soft: #f7f4ee; --text: #111; --muted: #555; --shadow: none; }
+      body { background: #fff; }
+      body::before, .topbar .actions { display: none; }
+      .page { width: 100%; padding: 0; }
+      .hero, .card, .table-wrap, .stat { break-inside: avoid; box-shadow: none; }
+      .section { margin-top: 28px; }
+      a { color: inherit; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <div class="topbar">
+      <span>AMBER / PHASE 3 / THREE-PHASE DOUBLE-BLIND TEST</span>
+      <div class="actions">
+        <button class="button" type="button" id="themeToggle">切换主题</button>
+        <button class="button" type="button" onclick="window.print()">打印 / 导出 PDF</button>
+      </div>
+    </div>
+
+    <header class="hero">
+      <p class="kicker">琥珀计划第三阶段 · 三轮校准版</p>
+      <h1>MCP 双盲测试<br>评分与效率分析</h1>
+      <p class="hero-copy">同一批 10 个问题、Cursor 与 ChatGPT 两个模型，分别对比无 MCP、第一次添加 MCP、优化后 MCP 三轮结果。评分和耗时均来自三张测试表的当前记录。</p>
+      <div class="verdict">
+        <div class="verdict-mark">A</div>
+        <div>
+          <strong>结论：优化后的 MCP 同时达到满分质量与更低调用成本</strong>
+          <p>优化后 MCP 总分为 100 / 100，较无 MCP 增加 10 分，较第一次添加 MCP 增加 2 分；总耗时 31 分 10 秒，较第一次添加 MCP 缩短 5 分 26 秒（−14.8%），但仍比无 MCP 多 4 分 41 秒（+17.7%）。优化轮两模型的 10 / 10 次调用决策均符合预期。</p>
+        </div>
+      </div>
+    </header>
+
+    <section class="stats" aria-label="关键指标">
+      <article class="stat"><div class="stat-value">4.5 → 5.0</div><div class="stat-label">无 MCP → 优化后 MCP 总体平均分 / 5</div></article>
+      <article class="stat"><div class="stat-value">90 → 100</div><div class="stat-label">无 MCP → 优化后 MCP 总分 / 100</div></article>
+      <article class="stat"><div class="stat-value">36:36 → 31:10</div><div class="stat-label">第一次 MCP → 优化后 MCP，总耗时减少 5:26</div></article>
+      <article class="stat"><div class="stat-value">+10 分</div><div class="stat-label">优化后 MCP 相对无 MCP 的质量净增</div></article>
+      <article class="stat"><div class="stat-value">20 / 20</div><div class="stat-label">优化后 MCP 轮满分回答数</div></article>
+      <article class="stat"><div class="stat-value">10 / 10</div><div class="stat-label">两模型调用决策分别与预期一致</div></article>
+    </section>
+
+    <section class="section">
+      <div class="section-heading">
+        <h2>三轮数据总览</h2>
+        <p class="section-note">每轮均为 10 个问题 × 2 个模型，共 20 个评分和耗时记录</p>
+      </div>
+      <div class="grid-3">
+        <article class="card phase baseline">
+          <div class="phase-label">第 1 轮 · 无 MCP</div>
+          <div class="phase-score">90 / 100</div>
+          <p>Cursor 45 / 50 · ChatGPT 45 / 50<br>平均 4.5 / 5 · 13 / 20 满分<br>总耗时 26:29</p>
+        </article>
+        <article class="card phase first">
+          <div class="phase-label">第 2 轮 · 第一次添加 MCP</div>
+          <div class="phase-score">98 / 100</div>
+          <p>Cursor 49 / 50 · ChatGPT 49 / 50<br>平均 4.9 / 5 · 18 / 20 满分<br>总耗时 36:36</p>
+        </article>
+        <article class="card phase optimized">
+          <div class="phase-label">第 3 轮 · 优化后 MCP</div>
+          <div class="phase-score">100 / 100</div>
+          <p>Cursor 50 / 50 · ChatGPT 50 / 50<br>平均 5.0 / 5 · 20 / 20 满分<br>总耗时 31:10</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-heading"><h2>三轮逐题评分</h2><p class="section-note">每格为 Cursor / ChatGPT；括号内为双模型合计</p></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>题目</th><th class="number">无 MCP</th><th class="number">第一次 MCP</th><th class="number">优化后 MCP</th><th class="number">无 MCP → 优化后</th></tr></thead>
+          <tbody>
+            <tr><td>配置备份列表列结构</td><td class="number">3 / 4 (7)</td><td class="number">5 / 5 (10)</td><td class="number">5 / 5 (10)</td><td class="number gain">+3</td></tr>
+            <tr><td>配置备份下载逻辑</td><td class="number">5 / 5 (10)</td><td class="number">5 / 5 (10)</td><td class="number">5 / 5 (10)</td><td class="number tie">0</td></tr>
+            <tr><td>巡检列表复杂表格列</td><td class="number">5 / 5 (10)</td><td class="number">5 / 5 (10)</td><td class="number">5 / 5 (10)</td><td class="number tie">0</td></tr>
+            <tr><td>批次详情页 UI</td><td class="number">3 / 3 (6)</td><td class="number">5 / 5 (10)</td><td class="number">5 / 5 (10)</td><td class="number gain">+4</td></tr>
+            <tr><td>事件单提交成功页</td><td class="number">5 / 5 (10)</td><td class="number">5 / 5 (10)</td><td class="number">5 / 5 (10)</td><td class="number tie">0</td></tr>
+            <tr><td>详情页通用操作</td><td class="number">5 / 5 (10)</td><td class="number">5 / 5 (10)</td><td class="number">5 / 5 (10)</td><td class="number tie">0</td></tr>
+            <tr><td>Git 扫描范围配置</td><td class="number">4 / 4 (8)</td><td class="number">5 / 5 (10)</td><td class="number">5 / 5 (10)</td><td class="number gain">+2</td></tr>
+            <tr><td>Amber 项目现场恢复</td><td class="number">5 / 5 (10)</td><td class="number">5 / 5 (10)</td><td class="number">5 / 5 (10)</td><td class="number tie">0</td></tr>
+            <tr><td>SSO 演练配置核对</td><td class="number">5 / 4 (9)</td><td class="number">5 / 5 (10)</td><td class="number">5 / 5 (10)</td><td class="number gain">+1</td></tr>
+            <tr><td>新应用来源接入</td><td class="number">5 / 5 (10)</td><td class="number">4 / 4 (8)</td><td class="number">5 / 5 (10)</td><td class="number tie">0</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="footnote">第一次添加 MCP 将 4 个历史相关题提升至满分，但“新应用来源接入”从 10 分回落到 8 分。优化后，该负向对照恢复为 10 分，因此第三轮不仅保留了历史题收益，还消除了第二轮唯一的质量回落。</p>
+    </section>
+
+    <section class="section">
+      <div class="section-heading"><h2>对比一：无 MCP 与第一次添加 MCP</h2><p class="section-note">验证历史证据层是否带来质量增益</p></div>
+      <div class="grid-2">
+        <article class="card boundary-card">
+          <h3>质量：+8 分，90 → 98</h3>
+          <ul>
+            <li>总平均分从 4.5 升至 4.9，满分回答从 13 个增加到 18 个。</li>
+            <li>配置备份列表列结构、批次详情页 UI、Git 扫描范围配置、SSO 演练配置核对合计增加 10 分。</li>
+            <li>新应用来源接入作为负向对照下降 2 分，说明首次引入 MCP 仍存在无强历史时的干扰风险。</li>
+          </ul>
+        </article>
+        <article class="card boundary-card neutral">
+          <h3>效率：+10:07，26:29 → 36:36</h3>
+          <ul>
+            <li>总耗时增加 38.2%，质量增益以明显延迟成本换取。</li>
+            <li>Cursor 由 14:12 增至 16:56；ChatGPT 由 12:17 增至 19:40。</li>
+            <li>结论：首次 MCP 证明了质量价值，但调用范围和检索成本尚未收敛。</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-heading"><h2>对比二：第一次添加 MCP 与优化后 MCP</h2><p class="section-note">验证调用门控与检索优化是否有效</p></div>
+      <div class="grid-2">
+        <article class="card boundary-card">
+          <h3>质量：+2 分，98 → 100</h3>
+          <ul>
+            <li>Cursor 从 49 / 50 提升到 50 / 50；ChatGPT 同样从 49 / 50 提升到 50 / 50。</li>
+            <li>第二轮唯一回落的负向对照恢复满分，第三轮 20 个回答全部满分。</li>
+            <li>9 个应调用题均调用，1 个不应调用题均未调用；两模型决策准确率均为 10 / 10。</li>
+          </ul>
+        </article>
+        <article class="card boundary-card neutral">
+          <h3>效率：−5:26，36:36 → 31:10</h3>
+          <ul>
+            <li>总耗时下降 14.8%，并在质量更高的前提下回收了一半以上的首次新增耗时。</li>
+            <li>Cursor 总耗时从 16:56 降至 13:25；ChatGPT 从 19:40 降至 17:45。</li>
+            <li>结论：优化不是单纯减少调用，而是在正确调用决策下减少了无效或冗余的检索成本。</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-heading"><h2>最终判断</h2></div>
+      <div class="callout">
+        <h3>Amber MCP 应定位为按需启用的历史证据层</h3>
+        <p>第三轮给出了本批样本中的最佳结果：质量从无 MCP 的 90 分提升至 100 分，同时比首次 MCP 缩短 5 分 26 秒。它并非通用推理加速器：相对无 MCP 仍多耗时 17.7%，因此产品关键不是“始终调用”，而是仅在任务依赖历史决策、提交链或演变过程时调用，并以当前代码、Git 与测试作为最终事实依据。</p>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-heading"><h2>数据来源与限制</h2></div>
+      <div class="card">
+        <ul class="source-list">
+          <li><strong>无 MCP：</strong><a href="https://transsioner.feishu.cn/base/Inmhb4Vl0alBIAsvzaxcxC0Ln0d?table=tblUOb2Vp6B8DYa1&view=vewZ0dzsha">测试表格-原始数据</a></li>
+          <li><strong>第一次添加 MCP：</strong><a href="https://transsioner.feishu.cn/base/Inmhb4Vl0alBIAsvzaxcxC0Ln0d?table=tblgGmJPK8IA9UJK&view=vewZ0dzsha">测试表格-第一次添加 MCP</a></li>
+          <li><strong>优化后 MCP：</strong><a href="https://transsioner.feishu.cn/base/Inmhb4Vl0alBIAsvzaxcxC0Ln0d?table=tblWSqUPSRX0UJ81&view=vewZ0dzsha">测试表格-优化 MCP 后</a></li>
+        </ul>
+        <p class="footnote">统计范围为 10 个问题、每轮 20 个模型回答。评分直接采用三张表当前值；耗时将 `XmYs`、`Xm` 与 `Xs` 统一换算为秒。每个单元格仅一次计时，结论支持方向性比较，不代表统计显著性或稳定延迟。</p>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const root = document.documentElement;
+    const themeToggle = document.getElementById("themeToggle");
+    const savedTheme = localStorage.getItem("amber-report-theme");
+
+    if (savedTheme === "dark") {
+      root.dataset.theme = "dark";
+    }
+
+    themeToggle.addEventListener("click", () => {
+      const nextTheme = root.dataset.theme === "dark" ? "light" : "dark";
+      root.dataset.theme = nextTheme;
+      localStorage.setItem("amber-report-theme", nextTheme);
+    });
+  </script>
+</body>
+</html>
