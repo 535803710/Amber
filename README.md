@@ -100,9 +100,9 @@ Webhook 地址和 Bearer token 可在网页控制台的“修改记录”区域�
 
 ### MCP 任务上下文
 
-`npm run mcp:stdio` 启动只读 MCP 服务，提供 `amber_get_task_context`。它固定读取 AI 修改记录表和 Git 提交记录表，按项目在飞书端过滤，再按任务、文件、分支和时间筛选 AI 修改证据；Git 提交只作为强关联修改的嵌套补充。飞书认证、网络、权限或数据异常时自动读取目标仓库的 `.local` 队列。
+`npm run mcp:stdio` 启动只读 MCP 服务，提供 `amber_get_task_context`。默认只查询 AI 修改记录表，按项目在飞书端过滤，再按任务、文件、分支和时间筛选 AI 修改证据；历史演变、最终决定、重构、迁移或删除等任务会在一次调用内同时查询关联 Git 提交表。Git 提交只作为强关联修改的嵌套补充。飞书认证、网络、权限或数据异常时自动读取目标仓库的 `.local` 队列。
 
-MCP 输出契约为 v2。默认 `detail=minimal`、`limit=3`，每条证据只包含用户需求、修改结果和涉及文件；需要时间、分支或审计字段时可显式使用 `compact` 或 `full`。返回状态为 `ok`、`no_strong_history` 或 `degraded`，不会暴露完整 CLI 错误和警告。
+MCP 输出契约为 v2。默认 `detail=minimal`、`limit=3`，最多 10 条；每条证据包含用户需求、修改结果、完成时间和涉及文件。历史演变题会自动升级为 `compact + 8`，顶层 `retrieval` 会返回请求与实际生效的密度、上限及升级原因。`compact` 增加分支和强关联提交，`full` 再增加来源和匹配依据。需求和结果最多保留约 600 字，兼顾开头、关键词上下文与结尾。返回状态为 `ok`、`no_strong_history` 或 `degraded`，不会暴露完整 CLI 错误和警告。
 
 配置后的日常触发方式、调用参数、模式选择和状态处理见 [Codex 使用说明](docs/codex.md)。
 
@@ -119,7 +119,7 @@ Cursor 项目配置可写为：
 }
 ```
 
-Codex 使用同一 stdio 命令配置后即可调用该工具。输入必须包含 `workspace_root`（绝对路径）和 `task`，可选 `files` 与 `limit`。返回内容不会包含作者邮箱、会话 ID、Token、Webhook、附件或源码。
+Codex 使用同一 stdio 命令配置后即可调用该工具。输入必须包含 `workspace_root`（绝对路径）和 `task`，可选 `files`、`limit` 与 `detail`。历史演变题的自动升级可通过启动前设置 `AMBER_TASK_CONTEXT_ADAPTIVE_HISTORY=0` 紧急关闭；默认值为 `1`，该开关仅影响检索密度。返回内容不会包含作者邮箱、会话 ID、Token、Webhook、附件或源码。
 
 #### MCP 调用规则
 
