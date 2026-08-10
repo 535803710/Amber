@@ -192,6 +192,28 @@ function evaluateRuntime(target, runtime, issues, now, thresholds, startupGraceA
   }
   if (runtime.running) {
     target.status = "healthy";
+    const optionalWatchers = Object.entries(runtime.optionalWatchers || {});
+    const failed = optionalWatchers.filter(([, state]) => state?.status === "failed");
+    const restarting = optionalWatchers.filter(([, state]) => state?.status === "restarting");
+    if (failed.length > 0) {
+      issues.push(issue(
+        "runtime_optional_watcher_failed",
+        "runtime",
+        "warning",
+        `可选监听器自动重启失败：${failed.map(([label]) => label).join("、")}`,
+        now,
+        failed[0][1]?.changedAt
+      ));
+    } else if (restarting.length > 0) {
+      issues.push(issue(
+        "runtime_optional_watcher_restarting",
+        "runtime",
+        "warning",
+        `可选监听器正在自动重启：${restarting.map(([label]) => label).join("、")}`,
+        now,
+        restarting[0][1]?.changedAt
+      ));
+    }
     return;
   }
   target.status = "warning";
@@ -467,12 +489,17 @@ function collectRuntimeHealth(rootDir) {
   const running = Number.isInteger(pid) && pid > 0 && isProcessAlive(pid);
   const healthRunning = Number.isInteger(healthPid) && healthPid > 0 && isProcessAlive(healthPid);
   const expectedRunning = desired?.running === true;
+  const watcherState = readJson(resolve(rootDir, ".local/watcher-state.json"));
+  const optionalWatchers = running && watcherState?.runtimePid === pid
+    ? watcherState.optionalWatchers || {}
+    : {};
   return {
     expectedRunning,
     running,
     pid: running ? pid : null,
     healthRunning,
     healthPid: healthRunning ? healthPid : null,
+    optionalWatchers,
     desiredChangedAt: desired?.changedAt || null,
     consecutiveMisses: running ? 0 : Number(desired?.consecutiveMisses || 0)
   };
@@ -502,6 +529,14 @@ function applyHookHealthEvent(target, event) {
   if (!at) return;
   if (event.event === "begin") target.lastBeginAt = maxIso(target.lastBeginAt, at);
   if (event.event === "complete") target.lastCompleteAt = maxIso(target.lastCompleteAt, at);
+  if (
+    (event.event === "begin" || event.event === "complete") &&
+    target.lastErrorAt &&
+    Date.parse(at) >= Date.parse(target.lastErrorAt)
+  ) {
+    target.lastErrorAt = null;
+    target.lastError = null;
+  }
   if (event.event === "error") {
     if (!target.lastErrorAt || Date.parse(at) >= Date.parse(target.lastErrorAt)) {
       target.lastErrorAt = at;

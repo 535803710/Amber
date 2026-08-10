@@ -11,7 +11,10 @@ import {
 } from "../scripts/lib/health.mjs";
 import { planHealthAlerts } from "../scripts/lib/health-alerts.mjs";
 import { runHealthCheck } from "../scripts/health-monitor-worker.mjs";
-import { archiveStaleBaselines } from "../scripts/lib/health-reset.mjs";
+import {
+  archiveAbortedBaselines,
+  archiveStaleBaselines
+} from "../scripts/lib/health-reset.mjs";
 
 const NOW = Date.parse("2026-08-01T12:00:00.000Z");
 
@@ -118,6 +121,35 @@ test("health evaluator suppresses runtime and git scan alerts during startup gra
   assert.equal(health.issues.some((issue) => issue.id === "git_scan_stale"), false);
 });
 
+test("health reports an optional watcher that exhausted automatic restarts", () => {
+  const root = mkdtempSync(resolve(tmpdir(), "amber-health-optional-watcher-"));
+  const local = resolve(root, ".local");
+  mkdirSync(local, { recursive: true });
+  writeFileSync(resolve(local, "watch-all.pid"), `${process.pid}\n`, "utf8");
+  writeFileSync(resolve(local, "runtime-desired.json"), JSON.stringify({ running: true }), "utf8");
+  writeFileSync(resolve(local, "watcher-state.json"), JSON.stringify({
+    runtimePid: process.pid,
+    optionalWatchers: {
+      ui: {
+        status: "failed",
+        restarts: 4,
+        detail: "code 1",
+        changedAt: "2026-08-01T11:59:00.000Z"
+      }
+    }
+  }), "utf8");
+
+  const snapshot = collectHealthSnapshot({
+    rootDir: root,
+    now: NOW,
+    env: { FEISHU_WEBHOOK_URL: "", COMMIT_RECORD_SCAN_ROOTS: "" }
+  });
+  const health = evaluateHealth(snapshot, { now: NOW });
+
+  assert.equal(health.status, "warning");
+  assert.equal(health.issues.some((issue) => issue.id === "runtime_optional_watcher_failed"), true);
+});
+
 test("health thresholds accept environment overrides without accepting invalid values", () => {
   const thresholds = resolveHealthThresholds({
     AMBER_HEALTH_BASELINE_WARN_MS: "1234",
@@ -186,6 +218,36 @@ test("health snapshot tolerates corrupt queue and hook health lines", () => {
 
   assert.equal(snapshot.aiDelivery.oldestPendingAt, "2026-08-01T11:59:00.000Z");
   assert.equal(snapshot.hooks.ChatGPT.lastBeginAt, "2026-08-01T11:58:00.000Z");
+});
+
+test("a successful Hook event clears an older Hook error", () => {
+  const root = mkdtempSync(resolve(tmpdir(), "amber-health-hook-recovery-"));
+  const hooks = resolve(root, ".local/change-records");
+  mkdirSync(hooks, { recursive: true });
+  writeFileSync(resolve(hooks, "hook-health.ndjson"), [
+    JSON.stringify({
+      source: "ChatGPT",
+      event: "error",
+      error: "temporary failure",
+      at: "2026-08-01T11:00:00.000Z"
+    }),
+    JSON.stringify({
+      source: "ChatGPT",
+      event: "complete",
+      at: "2026-08-01T11:30:00.000Z"
+    })
+  ].join("\n"), "utf8");
+
+  const snapshot = collectHealthSnapshot({
+    rootDir: root,
+    now: NOW,
+    env: { FEISHU_WEBHOOK_URL: "", COMMIT_RECORD_SCAN_ROOTS: "" },
+    runtime: { expectedRunning: false, running: false }
+  });
+  const health = evaluateHealth(snapshot, { now: NOW });
+
+  assert.equal(snapshot.hooks.ChatGPT.lastErrorAt, null);
+  assert.equal(health.issues.some((issue) => issue.id === "chatgpt_hook_error"), false);
 });
 
 test("health snapshot exposes MCP task-context metrics", () => {
@@ -263,6 +325,109 @@ test("health reset archives only stale baselines and leaves fresh state untouche
   assert.equal(existsSync(resolve(baselineDir, "stale.json")), false);
   assert.equal(existsSync(resolve(baselineDir, "fresh.json")), true);
   assert.equal(existsSync(resolve(root, ".local/change-records/baselines-reset", result.runId, "manifest.json")), true);
+});
+
+test("health reconciliation archives aborted ChatGPT baselines and keeps completed turns active", () => {
+  const root = mkdtempSync(resolve(tmpdir(), "amber-health-aborted-"));
+  const codexHome = resolve(root, "codex-home");
+  const baselineDir = resolve(root, ".local/change-records/baselines/chatgpt");
+  const sessionId = "019fdb2b-5dca-7f42-8efc-bab2dfc97a32";
+  const turnId = "019fdb83-da72-7560-8091-fd9113406440";
+  const completedTurnId = "019fdb88-221a-7300-8b89-4019783d042a";
+  const startedAt = "2026-08-01T09:18:02.886Z";
+  const sessionDir = resolve(codexHome, "sessions/2026/08/01");
+  mkdirSync(baselineDir, { recursive: true });
+  mkdirSync(sessionDir, { recursive: true });
+  writeFileSync(resolve(baselineDir, `${sessionId}-${turnId}.json`), JSON.stringify({
+    source: "ChatGPT",
+    sessionId,
+    turnId,
+    key: `${sessionId}-${turnId}`,
+    startedAt
+  }), "utf8");
+  writeFileSync(resolve(baselineDir, `${sessionId}-${completedTurnId}.json`), JSON.stringify({
+    source: "ChatGPT",
+    sessionId,
+    turnId: completedTurnId,
+    key: `${sessionId}-${completedTurnId}`,
+    startedAt
+  }), "utf8");
+  writeFileSync(
+    resolve(sessionDir, `rollout-2026-08-01T15-41-20-${sessionId}.jsonl`),
+    [
+      JSON.stringify({
+        timestamp: "2026-08-07T09:17:59.355Z",
+        type: "event_msg",
+        payload: { type: "task_started", turn_id: turnId }
+      }),
+      JSON.stringify({
+        timestamp: "2026-08-07T09:20:54.472Z",
+        type: "event_msg",
+        payload: { type: "turn_aborted", turn_id: turnId }
+      }),
+      JSON.stringify({
+        timestamp: "2026-08-07T09:30:54.472Z",
+        type: "event_msg",
+        payload: { type: "task_complete", turn_id: completedTurnId }
+      })
+    ].join("\n"),
+    "utf8"
+  );
+
+  const result = archiveAbortedBaselines({ rootDir: root, codexHome, now: NOW });
+
+  assert.equal(result.archivedCount, 1);
+  assert.equal(existsSync(resolve(baselineDir, `${sessionId}-${turnId}.json`)), false);
+  assert.equal(existsSync(resolve(baselineDir, `${sessionId}-${completedTurnId}.json`)), true);
+  assert.equal(existsSync(resolve(root, ".local/change-records/baselines-reset", result.runId, "manifest.json")), true);
+
+  const snapshot = collectHealthSnapshot({
+    rootDir: root,
+    now: NOW,
+    env: { FEISHU_WEBHOOK_URL: "", COMMIT_RECORD_SCAN_ROOTS: "" },
+    runtime: { expectedRunning: false, running: false }
+  });
+  const health = evaluateHealth(snapshot, { now: NOW });
+  assert.equal(health.issues.some((issue) => issue.id === "chatgpt_baseline_stale"), true);
+});
+
+test("health worker reconciles aborted ChatGPT turns before evaluating alerts", async () => {
+  const root = mkdtempSync(resolve(tmpdir(), "amber-health-aborted-worker-"));
+  const codexHome = resolve(root, "codex-home");
+  const sessionId = "session-aborted";
+  const turnId = "turn-aborted";
+  const startedAt = "2026-08-01T09:18:02.886Z";
+  const baselineFile = resolve(
+    root,
+    `.local/change-records/baselines/chatgpt/${sessionId}-${turnId}.json`
+  );
+  const sessionFile = resolve(
+    codexHome,
+    `sessions/2026/08/01/rollout-2026-08-01T09-18-02-${sessionId}.jsonl`
+  );
+  mkdirSync(resolve(baselineFile, ".."), { recursive: true });
+  mkdirSync(resolve(sessionFile, ".."), { recursive: true });
+  writeFileSync(baselineFile, JSON.stringify({
+    source: "ChatGPT",
+    sessionId,
+    turnId,
+    key: `${sessionId}-${turnId}`,
+    startedAt
+  }), "utf8");
+  writeFileSync(sessionFile, JSON.stringify({
+    type: "event_msg",
+    payload: { type: "turn_aborted", turn_id: turnId }
+  }), "utf8");
+
+  const result = await runHealthCheck({
+    rootDir: root,
+    now: NOW,
+    env: { CODEX_HOME: codexHome, FEISHU_WEBHOOK_URL: "", COMMIT_RECORD_SCAN_ROOTS: "" },
+    notify: false
+  });
+
+  assert.equal(result.health.issues.some((issue) => issue.id === "chatgpt_baseline_stale"), false);
+  assert.equal(existsSync(baselineFile), false);
 });
 
 test("health alert switch suppresses sends without suppressing health state", async () => {

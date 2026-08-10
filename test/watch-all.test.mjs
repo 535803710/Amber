@@ -23,6 +23,29 @@ test("UI watcher failure leaves record workers running", () => {
   assert.match(warnings[0], /ui.*继续运行/i);
 });
 
+test("optional watcher failure is restarted without stopping record workers", () => {
+  const ui = fakeWatcher("ui");
+  const replacement = fakeWatcher("ui");
+  const records = fakeWatcher("records");
+  const children = [ui, records];
+  const states = [];
+
+  superviseWatchers(children, {
+    restartOptional: (child) => {
+      assert.equal(child, ui);
+      return replacement;
+    },
+    scheduleRestart: (callback) => callback(),
+    onOptionalState: (state) => states.push(state)
+  });
+
+  ui.emit("exit", 1, null);
+
+  assert.equal(children[0], replacement);
+  assert.equal(records.killed, false);
+  assert.deepEqual(states.map((state) => state.status), ["restarting", "running"]);
+});
+
 test("record worker failure remains fatal", () => {
   const ui = fakeWatcher("ui");
   const records = fakeWatcher("records");

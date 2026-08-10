@@ -2,9 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import {
+  existsSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   renameSync,
   rmSync,
   writeFileSync
@@ -14,6 +16,7 @@ import { resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import {
   beginChangeTurn,
+  cacheChangeTurnResponse,
   claimReadyQueueItems,
   completeChangeTurn,
   enqueueChangeEvent,
@@ -514,6 +517,50 @@ test("pre-existing dirty files are excluded from the turn", () => {
     assert.deepEqual(done.event.changed_files, [{ status: "A", path: "task.txt" }]);
     assert.equal(done.event.additions, 1);
     assert.equal(done.event.deletions, 0);
+  });
+});
+
+test("duplicate begin for the same turn preserves the original baseline", () => {
+  withRepo(({ repo, state }) => {
+    const input = hookInput("ChatGPT", repo, "same-session", "same-turn", "change task");
+    beginChangeTurn(input, { rootDir: state });
+    writeFileSync(resolve(repo, "early.txt"), "early\n", "utf8");
+
+    beginChangeTurn(input, { rootDir: state });
+    writeFileSync(resolve(repo, "late.txt"), "late\n", "utf8");
+    const done = completeChangeTurn(input, { rootDir: state });
+
+    assert.deepEqual(done.event.changed_files, [
+      { status: "A", path: "early.txt" },
+      { status: "A", path: "late.txt" }
+    ]);
+  });
+});
+
+test("a new ChatGPT turn supersedes an unfinished turn in the same session", () => {
+  withRepo(({ repo, state }) => {
+    const oldTurn = hookInput("ChatGPT", repo, "continued-session", "old-turn");
+    const newTurn = hookInput("ChatGPT", repo, "continued-session", "new-turn");
+    beginChangeTurn(oldTurn, { rootDir: state });
+    cacheChangeTurnResponse({ ...oldTurn, response: "old response" }, { rootDir: state });
+
+    beginChangeTurn(newTurn, { rootDir: state });
+
+    assert.equal(
+      completeChangeTurn(oldTurn, { rootDir: state }).skipped,
+      "missing_baseline"
+    );
+    const archiveRoot = resolve(state, ".local/change-records/baselines-reset");
+    const [runId] = readdirSync(archiveRoot);
+    const manifest = JSON.parse(readFileSync(resolve(archiveRoot, runId, "manifest.json"), "utf8"));
+    assert.equal(manifest.reason, "superseded");
+    assert.equal(manifest.supersededBy, "continued-session-new-turn");
+    assert.equal(manifest.entries.length, 1);
+    assert.equal(manifest.entries[0].key, "continued-session-old-turn");
+    assert.equal(existsSync(manifest.entries[0].archivedPath), true);
+    assert.equal(existsSync(manifest.entries[0].archivedResponsePath), true);
+    writeFileSync(resolve(repo, "current.txt"), "current\n", "utf8");
+    assert.equal(completeChangeTurn(newTurn, { rootDir: state }).queued, true);
   });
 });
 

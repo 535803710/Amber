@@ -39,7 +39,10 @@ test("提交记录支持状态筛选，并忽略损坏队列文件", () => {
 });
 
 test("分页参数拒绝非法状态、非正整数和过大页大小", () => {
-  assert.throws(() => normalizeListQuery({ status: "unknown" }), /status/);
+  assert.throws(
+    () => normalizeListQuery({ status: "unknown" }),
+    (error) => error instanceof RangeError && error.statusCode === 400 && /status/.test(error.message)
+  );
   assert.throws(() => normalizeListQuery({ page: "0" }), /page/);
   assert.throws(() => normalizeListQuery({ pageSize: "101" }), /pageSize/);
   assert.deepEqual(normalizeListQuery({ status: "sent", page: "2", pageSize: "10" }), {

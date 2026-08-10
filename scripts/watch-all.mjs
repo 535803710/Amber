@@ -3,6 +3,7 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
+import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { superviseWatchers } from "./lib/watch-supervisor.mjs";
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
@@ -10,6 +11,7 @@ const NOTIFICATIONS_SCRIPT = resolve(SCRIPT_DIR, "watch-notifications.mjs");
 const UI_PROMPTS_SCRIPT = resolve(SCRIPT_DIR, "watch-ui-prompts.mjs");
 const CHANGE_RECORD_WORKER = resolve(SCRIPT_DIR, "change-record-worker.mjs");
 const COMMIT_RECORD_WORKER = resolve(SCRIPT_DIR, "commit-record-worker.mjs");
+const WATCHER_STATE_FILE = resolve(SCRIPT_DIR, "../.local/watcher-state.json");
 
 main();
 
@@ -33,6 +35,13 @@ function main() {
 
   const isProbe = args.includes("--probe");
   let stopping = false;
+  const optionalWatchers = {
+    toast: watcherState("running"),
+    ui: watcherState("running")
+  };
+  if (!isProbe) {
+    writeWatcherState(optionalWatchers);
+  }
 
   const stop = (reason, code = 0, killOthers = true) => {
     if (stopping) {
@@ -60,6 +69,14 @@ function main() {
     isStopping: () => stopping,
     onFatal: stop,
     onWarning: (message) => console.error(message),
+    restartOptional: isProbe ? null : (child) => {
+      const scriptPath = child.label === "toast" ? NOTIFICATIONS_SCRIPT : UI_PROMPTS_SCRIPT;
+      return spawnWatcher(child.label, scriptPath, args);
+    },
+    onOptionalState: ({ label, status, restarts, detail }) => {
+      optionalWatchers[label] = watcherState(status, { restarts, detail });
+      writeWatcherState(optionalWatchers);
+    },
     onProbeComplete: () => {
       stopping = true;
       process.exitCode = 0;
@@ -68,6 +85,25 @@ function main() {
 
   process.on("SIGINT", () => stop("收到停止信号，正在关闭 watcher...", 0));
   process.on("SIGTERM", () => stop("收到终止信号，正在关闭 watcher...", 0));
+}
+
+function watcherState(status, { restarts = 0, detail = null } = {}) {
+  return {
+    status,
+    restarts,
+    detail,
+    changedAt: new Date().toISOString()
+  };
+}
+
+function writeWatcherState(optionalWatchers) {
+  mkdirSync(dirname(WATCHER_STATE_FILE), { recursive: true });
+  const tempPath = `${WATCHER_STATE_FILE}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(tempPath, `${JSON.stringify({
+    runtimePid: process.pid,
+    optionalWatchers
+  }, null, 2)}\n`, "utf8");
+  renameSync(tempPath, WATCHER_STATE_FILE);
 }
 
 function spawnWatcher(label, scriptPath, args) {

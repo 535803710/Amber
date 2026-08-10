@@ -37,6 +37,15 @@ export function beginChangeTurn(input, options = {}) {
     return { ok: true, skipped: "not_git" };
   }
 
+  const filePath = baselinePath(rootDir, source, identity.key);
+  const existing = readJson(filePath);
+  if (existing) {
+    appendChangeLog(rootDir, `${source} begin duplicate ${identity.key} ${repo.root}`);
+    return { ok: true, baseline: existing, duplicate: true };
+  }
+
+  archiveSupersededBaselines(rootDir, source, identity, repo.root);
+
   const tree = captureWorktreeTree(repo.root);
   const baseline = {
     schemaVersion: 1,
@@ -55,7 +64,6 @@ export function beginChangeTurn(input, options = {}) {
     startedAt: new Date().toISOString()
   };
 
-  const filePath = baselinePath(rootDir, source, identity.key);
   writeJsonAtomic(filePath, baseline);
   appendChangeLog(rootDir, `${source} begin ${identity.key} ${repo.root}`);
   return { ok: true, baseline };
@@ -576,6 +584,10 @@ function findBaselineForCompletion(rootDir, source, identity, cwd) {
     return { filePath: exactPath, baseline: exact };
   }
 
+  if (source !== "Cursor") {
+    return null;
+  }
+
   const repo = inspectRepository(cwd || process.cwd());
   const candidates = listJsonFiles(resolve(changeRecordRoot(rootDir), "baselines", source.toLowerCase()))
     .map((filePath) => ({ filePath, baseline: readJson(filePath) }))
@@ -583,6 +595,58 @@ function findBaselineForCompletion(rootDir, source, identity, cwd) {
     .filter((item) => !repo || item.baseline.repoRoot === repo.root)
     .sort((a, b) => String(b.baseline.startedAt).localeCompare(String(a.baseline.startedAt)));
   return candidates[0] || null;
+}
+
+function archiveSupersededBaselines(rootDir, source, identity, repoRoot) {
+  const directory = resolve(changeRecordRoot(rootDir), "baselines", source.toLowerCase());
+  const identityHash = createHash("sha256").update(identity.key).digest("hex").slice(0, 12);
+  const runId = `${new Date().toISOString().replace(/[:.]/g, "-")}-${process.pid}-${identityHash}-superseded`;
+  const archiveRoot = resolve(changeRecordRoot(rootDir), "baselines-reset", runId);
+  const entries = [];
+  for (const filePath of listJsonFiles(directory)) {
+    const baseline = readJson(filePath);
+    if (
+      baseline?.key === identity.key ||
+      baseline?.sessionId !== identity.sessionId ||
+      baseline?.repoRoot !== repoRoot
+    ) {
+      continue;
+    }
+    const sourceName = source.toLowerCase();
+    const destinationDir = resolve(archiveRoot, sourceName);
+    mkdirSync(destinationDir, { recursive: true });
+    const destination = resolve(destinationDir, basename(filePath));
+    renameSync(filePath, destination);
+
+    const responseFile = responsePath(rootDir, source, baseline.key);
+    let archivedResponsePath = null;
+    if (existsSync(responseFile)) {
+      const responseDestinationDir = resolve(archiveRoot, "responses", sourceName);
+      mkdirSync(responseDestinationDir, { recursive: true });
+      archivedResponsePath = resolve(responseDestinationDir, basename(responseFile));
+      renameSync(responseFile, archivedResponsePath);
+    }
+    entries.push({
+      source: sourceName,
+      fileName: basename(filePath),
+      key: baseline.key,
+      startedAt: baseline.startedAt || null,
+      reason: "superseded",
+      supersededBy: identity.key,
+      archivedPath: destination,
+      archivedResponsePath
+    });
+    appendChangeLog(rootDir, `${source} superseded ${baseline.key} by ${identity.key}`);
+  }
+  if (entries.length > 0) {
+    writeJsonAtomic(resolve(archiveRoot, "manifest.json"), {
+      runId,
+      createdAt: new Date().toISOString(),
+      reason: "superseded",
+      supersededBy: identity.key,
+      entries
+    });
+  }
 }
 
 function findLatestResponse(rootDir, source, sessionId) {

@@ -43,7 +43,7 @@ export function listRecordPage(kind, query = {}, options = {}) {
 export function normalizeListQuery(query = {}) {
   const status = readQueryValue(query, "status") || "all";
   if (status !== "all" && !QUEUE_STATUSES.includes(status)) {
-    throw new RangeError("status 必须为 all、pending、sent 或 failed。");
+    throw queryRangeError("status 必须为 all、pending、sent 或 failed。");
   }
 
   return {
@@ -147,13 +147,19 @@ function readPositiveInteger(value, name, fallback, maximum) {
     return fallback;
   }
   if (!/^\d+$/.test(String(value))) {
-    throw new RangeError(`${name} 必须为正整数。`);
+    throw queryRangeError(`${name} 必须为正整数。`);
   }
   const number = Number(value);
   if (!Number.isSafeInteger(number) || number < 1 || number > maximum) {
-    throw new RangeError(`${name} 必须在 1 到 ${maximum} 之间。`);
+    throw queryRangeError(`${name} 必须在 1 到 ${maximum} 之间。`);
   }
   return number;
+}
+
+function queryRangeError(message) {
+  const error = new RangeError(message);
+  error.statusCode = 400;
+  return error;
 }
 
 function readQueryValue(query, name) {

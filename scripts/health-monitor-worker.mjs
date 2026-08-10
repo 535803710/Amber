@@ -9,6 +9,7 @@ import {
   evaluateHealth
 } from "./lib/health.mjs";
 import { planHealthAlerts, sendHealthAlerts } from "./lib/health-alerts.mjs";
+import { archiveAbortedBaselines } from "./lib/health-reset.mjs";
 import { readSettings } from "./lib/settings.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -33,6 +34,14 @@ export async function runHealthCheck({
   const thresholds = resolveHealthThresholds(env);
   const healthAlertsEnabled = alertsEnabled ?? readSettings(rootDir).healthAlertsEnabled;
   const runtime = readRuntimeSnapshot(rootDir, { persist });
+  if (persist) {
+    archiveAbortedBaselines({
+      rootDir,
+      codexHome: env.CODEX_HOME,
+      now,
+      minimumAgeMs: thresholds.baselineWarnMs
+    });
+  }
   const snapshot = collectHealthSnapshot({ rootDir, now, env, runtime });
   const health = evaluateHealth(snapshot, { now, thresholds });
   const currentState = readJson(resolve(rootDir, ".local/health-monitor/state.json")) || {};
