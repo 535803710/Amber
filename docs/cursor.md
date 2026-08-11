@@ -27,12 +27,14 @@ watcher 前台运行，在终端按 `Ctrl+C` 停止。
 
 三层方案（建议都开着）：
 
-1. **用户 Hook**（自动）：`C:\Users\hongliang.li\.cursor\hooks.json`  
+1. **用户 Hook**（自动）：`%USERPROFILE%\.cursor\hooks.json`
    监听 `afterAgentResponse` / `stop`，调用 `scripts/hooks/on-cursor-event.mjs`  
-   调试日志：`d:\project\Amber\.local\cursor-hook.log`  
+   调试日志：`%AMBER_HOME%\.local\cursor-hook.log`
    **修改 hooks 后需 Reload Cursor**
 
 2. **Cursor Rule**：Agent AskQuestion 前先 Shell 执行 `notify-ask.mjs`
+
+   传入具体的待回答问题摘要。纯工具标签 `Bash` 会被忽略，避免在没有待处理问题时误发“需要操作”；真实 `Command approval` 仍由系统 toast 监听处理。
 
 3. **手动测试**：
    ```powershell

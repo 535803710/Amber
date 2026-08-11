@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "notify": "node scripts/notify.mjs",
     "status": "node scripts/status.mjs",
@@ -32,6 +35,9 @@
     "autostart:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stop-watch-background.ps1",
     "dashboard": "node scripts/dashboard-server.mjs",
     "mcp:stdio": "node scripts/mcp-stdio-server.mjs",
+    "team:install": "node scripts/team-setup.mjs install",
+    "team:doctor": "node scripts/team-setup.mjs doctor",
+    "team:uninstall": "node scripts/team-setup.mjs uninstall",
     "test": "node --test"
   }
 }

@@ -17,7 +17,7 @@ alwaysApply: true
 ## AskQuestion 前必须执行（Shell，第一步）
 
 ```powershell
-node "D:/project/Amber/scripts/notify-ask.mjs" "<一句话问题摘要>"
+node "$env:AMBER_HOME/scripts/notify-ask.mjs" "<一句话问题摘要>"
 ```
 
 然后再调用 AskQuestion。用户回答前不要执行其他工具。
@@ -25,11 +25,12 @@ node "D:/project/Amber/scripts/notify-ask.mjs" "<一句话问题摘要>"
 ## 示例
 
 ```powershell
-node "D:/project/Amber/scripts/notify-ask.mjs" "你想怎么测通知"
+node "$env:AMBER_HOME/scripts/notify-ask.mjs" "你想怎么测通知"
 ```
 
 ## 注意
 
 - 不可跳过 notify-ask，即使用户只说「问我一个问题」
+- 摘要必须说明具体待回答问题，不要使用 `Bash` 等工具名称；纯 `Bash` 标签会被忽略
 - 失焦时 toast 可能随后到达，属正常；去重后飞书仍应只有 1 条
 - `watch:all` 请保持运行

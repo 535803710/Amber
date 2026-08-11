@@ -30,6 +30,19 @@ Amber 采集 AI 修改与 Git 提交事实，通过飞书沉淀可查询的研�
 
 ## 怎么用
 
+### 团队一键安装（Windows）
+
+适合已有 Node.js 22+、lark-cli 登录和当前飞书 Base 权限的团队成员：
+
+1. 解压 Amber 后双击 `install.bat`。
+2. 安装器会复制运行文件到 `%LOCALAPPDATA%\Amber`，备份并合并 Cursor/Codex 的 Hook 与 MCP 配置，同时启用开机自启动。
+3. 安装完成后会打开本地控制台。填写 AI 修改记录、Git 提交记录的 Webhook，并保存实际 Git 扫描目录。
+4. Reload Cursor、重启 Codex 或新建任务，使客户端加载新的 Hook 和 MCP 配置。
+
+安装过程不会覆盖其他 Hook、MCP 配置、`.env.local` 或 `.local` 队列。Webhook 与 Token 只写入成员本机，不放入安装包。可运行 `amber.bat doctor` 复查 IDE 接入、飞书登录和两张 Base 表的读取权限；双击 `uninstall.bat` 会移除 Amber 接入和自启动，并保留本地配置、队列与卸载前备份。
+
+详细步骤与故障处理见 [团队安装说明](docs/团队安装说明.md)。
+
 ### 第一次配
 
 1. 飞书建群聊，加一个自定义机器人，复制 webhook。
@@ -113,13 +126,15 @@ Cursor 项目配置可写为：
   "mcpServers": {
     "amber": {
       "command": "node",
-      "args": ["D:/project/Amber/scripts/mcp-stdio-server.mjs"]
+      "args": ["C:/Users/<用户名>/AppData/Local/Amber/scripts/mcp-stdio-server.mjs"]
     }
   }
 }
 ```
 
 Codex 使用同一 stdio 命令配置后即可调用该工具。输入必须包含 `workspace_root`（绝对路径）和 `task`，可选 `files`、`limit` 与 `detail`。历史演变题的自动升级可通过启动前设置 `AMBER_TASK_CONTEXT_ADAPTIVE_HISTORY=0` 紧急关闭；默认值为 `1`，该开关仅影响检索密度。返回内容不会包含作者邮箱、会话 ID、Token、Webhook、附件或源码。
+
+团队安装器会自动生成实际安装目录对应的 Cursor/Codex 配置。共享 Base 也可通过 `.env.local` 的 `AMBER_BASE_TOKEN`、`AMBER_AI_TABLE_ID`、`AMBER_COMMIT_TABLE_ID` 覆盖；未配置时继续使用当前默认双表，保持已有行为。
 
 #### MCP 调用规则
 

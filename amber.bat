@@ -55,6 +55,7 @@ if /i "%ACTION%"=="stop" goto action_stop
 if /i "%ACTION%"=="test" goto action_test
 if /i "%ACTION%"=="edit" goto action_edit_config
 if /i "%ACTION%"=="status" goto action_status
+if /i "%ACTION%"=="doctor" goto action_doctor
 if /i "%ACTION%"=="help" goto help
 if /i "%ACTION%"=="--help" goto help
 if /i "%ACTION%"=="-h" goto help
@@ -106,6 +107,10 @@ echo Last task status:
 "%NODE_EXE%" "scripts\check-status.mjs"
 goto after_action
 
+:action_doctor
+"%NODE_EXE%" "scripts\team-setup.mjs" doctor --target "%ROOT%."
+goto after_action
+
 :help
 echo Usage:
 echo   amber.bat
@@ -115,6 +120,7 @@ echo   amber.bat stop       Stop watch:all
 echo   amber.bat test       Send a test notification
 echo   amber.bat edit       Edit .env.local
 echo   amber.bat status     Print dashboard, watcher and last status
+echo   amber.bat doctor     Check team integrations and Feishu access
 echo.
 echo Env:
 echo   AMBER_DASHBOARD_PORT Override dashboard port, default 3847

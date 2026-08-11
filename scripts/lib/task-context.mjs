@@ -9,6 +9,7 @@ import {
   CACHE_TTL_MS,
   DEFAULT_RESULT_LIMIT,
   MAX_RESULT_LIMIT,
+  resolveTaskContextSource,
   timestamp
 } from "./task-context/constants.mjs";
 import {
@@ -53,6 +54,7 @@ const TRANSITION_MARKERS = ["调整", "演变", "演进", "重构", "迁移", "�
 export async function getTaskContext(input, options = {}) {
   const startMs = performance.now();
   const request = resolveRetrievalPolicy(normalizeRequest(input), options.env);
+  const source = resolveTaskContextSource(options.env);
   const now = options.now ?? Date.now();
   const cacheKey = requestCacheKey(request);
 
@@ -85,7 +87,9 @@ export async function getTaskContext(input, options = {}) {
   // 并行查 AI 表 + commit 表（带数据集缓存 + in-flight 合并 + SWR）
   // 先启动两个 fetchTable（不 await），确保 runCommand 同步调用阶段并行触发
   const aiTimed = timedAsync(() => fetchTable({
-    tableId: AI_TABLE_ID,
+    tableId: source.aiTableId,
+    baseToken: source.baseToken,
+    recordType: "change",
     fields: AI_FIELDS,
     project: request.project,
     sortField: "完成时间",
@@ -95,7 +99,9 @@ export async function getTaskContext(input, options = {}) {
   }));
   const commitTimed = needsCommits
     ? timedAsync(() => fetchTable({
-        tableId: COMMIT_TABLE_ID,
+        tableId: source.commitTableId,
+        baseToken: source.baseToken,
+        recordType: "commit",
         fields: COMMIT_FIELDS,
         project: request.project,
         sortField: "提交时间",
@@ -203,7 +209,7 @@ export async function getTaskContext(input, options = {}) {
 }
 
 // 带数据集缓存 + in-flight 合并 + SWR 的表查询
-async function fetchTable({ tableId, fields, project, sortField, runCommand, now, enableSWR }) {
+async function fetchTable({ tableId, fields, project, sortField, baseToken, recordType, runCommand, now, enableSWR }) {
   const cacheKey = `${tableId}:${project}`;
   const cached = getDataset(cacheKey, now);
 
@@ -221,7 +227,7 @@ async function fetchTable({ tableId, fields, project, sortField, runCommand, now
   // 2. SWR：过期但有旧值 → 返回旧值 + 后台刷新
   if (cached.stale && enableSWR) {
     if (!getInflight(cacheKey)) {
-      const promise = actuallyFetch({ tableId, fields, project, sortField, runCommand, now });
+      const promise = actuallyFetch({ tableId, fields, project, sortField, baseToken, recordType, runCommand, now });
       setInflight(cacheKey, promise);
     }
     return {
@@ -247,15 +253,15 @@ async function fetchTable({ tableId, fields, project, sortField, runCommand, now
   }
 
   // 4. 全新查询
-  const promise = actuallyFetch({ tableId, fields, project, sortField, runCommand, now });
+  const promise = actuallyFetch({ tableId, fields, project, sortField, baseToken, recordType, runCommand, now });
   setInflight(cacheKey, promise);
   const result = await promise;
   return { ...result, remoteCalls: 1, cacheStatus: "miss" };
 }
 
-async function actuallyFetch({ tableId, fields, project, sortField, runCommand, now }) {
+async function actuallyFetch({ tableId, fields, project, sortField, baseToken, recordType, runCommand, now }) {
   const result = await withFetchSlot(() =>
-    listTable({ tableId, fields, project, sortField, runCommand })
+    listTable({ tableId, fields, project, sortField, baseToken, recordType, runCommand })
   );
   // 空结果用 negative cache（短 TTL），避免频繁重复查空
   if (result.records.length === 0 && result.warnings.length === 0) {

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
   AI_TABLE_ID,
   COMMIT_TABLE_ID,
@@ -16,6 +16,7 @@ import {
   parseRecords
 } from "../scripts/lib/task-context.mjs";
 import { clearCache } from "../scripts/lib/task-context/cache.mjs";
+import { resolveLarkCliInvocation } from "../scripts/lib/task-context/lark-source.mjs";
 
 beforeEach(() => clearCache());
 
@@ -36,6 +37,100 @@ test("飞书双表查询按项目过滤、投影字段、排序并限制到 200 
   assert.equal(valueAfter(aiArgs, "--limit"), String(QUERY_LIMIT));
   assert.equal(valueAfter(aiArgs, "--as"), "user");
   assert.equal(aiArgs.filter((item) => item === "--field-id").length, 2);
+});
+
+test("团队环境变量可以覆盖 Base 和双表标识", async () => {
+  const calls = [];
+  await getTaskContext({
+    workspace_root: WORKSPACE,
+    task: "查询团队历史",
+    detail: "compact"
+  }, {
+    now: 1,
+    env: {
+      AMBER_BASE_TOKEN: "base-team",
+      AMBER_AI_TABLE_ID: "table-ai-team",
+      AMBER_COMMIT_TABLE_ID: "table-commit-team"
+    },
+    runCommand: async (args) => {
+      calls.push(args);
+      return JSON.stringify({ data: { items: [] } });
+    }
+  });
+  assert.equal(calls.length, 2);
+  assert.ok(calls.every((args) => valueAfter(args, "--base-token") === "base-team"));
+  assert.ok(calls.some((args) => valueAfter(args, "--table-id") === "table-ai-team"));
+  assert.ok(calls.some((args) => valueAfter(args, "--table-id") === "table-commit-team"));
+});
+
+test("Windows lark-cli shim 会解析到真实 Node 入口", () => {
+  const root = mkdtempSync(resolve(tmpdir(), "amber-lark-cli-"));
+  try {
+    const shim = resolve(root, "lark-cli.cmd");
+    const entry = resolve(root, "node_modules/@larksuite/cli/scripts/run.js");
+    mkdirSync(resolve(entry, ".."), { recursive: true });
+    writeFileSync(shim, "@echo off\r\n", "utf8");
+    writeFileSync(entry, "// cli\n", "utf8");
+    const invocation = resolveLarkCliInvocation(["auth", "status"], {
+      env: { AMBER_LARK_CLI_PATH: shim }
+    });
+    assert.equal(invocation.command, process.execPath);
+    assert.deepEqual(invocation.args, [entry, "auth", "status"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("独立 Windows lark-cli cmd 解析真实 Node 入口执行", () => {
+  const root = mkdtempSync(resolve(tmpdir(), "amber lark cmd-"));
+  try {
+    const shim = resolve(root, "bin/lark-cli.cmd");
+    const entry = resolve(root, "runtime/lark-run.mjs");
+    mkdirSync(resolve(shim, ".."), { recursive: true });
+    mkdirSync(resolve(entry, ".."), { recursive: true });
+    writeFileSync(
+      shim,
+      `@echo off\r\nnode \"${entry}\" %*\r\n`,
+      "utf8"
+    );
+    writeFileSync(entry, "process.stdout.write(JSON.stringify(process.argv.slice(2)));\n", "utf8");
+    const filter = JSON.stringify({ project: "A&B%PATH%|C<D>E(F)^G!H" });
+    const cliArgs = ["base", "+record-list", "--filter-json", filter];
+    const invocation = resolveLarkCliInvocation(cliArgs, {
+      env: { AMBER_LARK_CLI_PATH: shim }
+    });
+    assert.equal(invocation.command, process.execPath);
+    assert.deepEqual(invocation.args, [entry, ...cliArgs]);
+    const result = spawnSync(invocation.command, invocation.args, { encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), cliArgs);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("本地 lark-cli 入口命中时不会同步查询 PATH", () => {
+  const root = mkdtempSync(resolve(tmpdir(), "amber-lark-local-"));
+  try {
+    const entry = resolve(root, "run.js");
+    writeFileSync(entry, "// cli\n", "utf8");
+    let pathLookups = 0;
+    const invocation = resolveLarkCliInvocation(["auth", "status"], {
+      env: {},
+      localEntries: [entry],
+      findCommands: () => {
+        pathLookups += 1;
+        return [];
+      }
+    });
+    assert.equal(pathLookups, 0);
+    assert.deepEqual(invocation, {
+      command: process.execPath,
+      args: [entry, "auth", "status"]
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("compact 输出以 AI 修改为主并嵌套强关联提交", async () => {

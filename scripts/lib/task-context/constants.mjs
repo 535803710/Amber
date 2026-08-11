@@ -9,6 +9,14 @@ export const CACHE_TTL_MS = 60_000;
 export const DEFAULT_RESULT_LIMIT = 3;
 export const MAX_RESULT_LIMIT = 10;
 
+export function resolveTaskContextSource(env = process.env) {
+  return {
+    baseToken: text(env.AMBER_BASE_TOKEN) || AMBER_BASE_TOKEN,
+    aiTableId: text(env.AMBER_AI_TABLE_ID) || AI_TABLE_ID,
+    commitTableId: text(env.AMBER_COMMIT_TABLE_ID) || COMMIT_TABLE_ID
+  };
+}
+
 // 字符串/数字/对象 → trim 后的字符串；递归取 text/name/value 字段
 export function text(value) {
   if (typeof value === "string") return value.trim();

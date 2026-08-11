@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import readline from "node:readline";
 import { randomUUID } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getTaskContext } from "./lib/task-context.mjs";
@@ -10,6 +11,14 @@ import { recordCall } from "./lib/task-context/metrics.mjs";
 const TOOL_NAME = "amber_get_task_context";
 const PROTOCOL_VERSION = "2025-06-18";
 const AMBER_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
+loadEnvFile(".env");
+loadEnvFile(".env.local", new Set([
+  "AMBER_BASE_TOKEN",
+  "AMBER_AI_TABLE_ID",
+  "AMBER_COMMIT_TABLE_ID",
+  "AMBER_LARK_CLI_PATH"
+]));
 
 const tool = {
   name: TOOL_NAME,
@@ -153,4 +162,16 @@ function errorResponse(id, code, message, cause) {
 
 function write(message) {
   if (message) process.stdout.write(`${JSON.stringify(message)}\n`);
+}
+
+function loadEnvFile(name, overrideKeys = new Set()) {
+  const path = resolve(AMBER_ROOT, name);
+  if (!existsSync(path)) return;
+  for (const line of readFileSync(path, "utf8").split(/\r?\n/)) {
+    const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
+    if (!match) continue;
+    const key = match[1];
+    const value = match[2].replace(/^(["'])(.*)\1$/, "$2").trim();
+    if (process.env[key] === undefined || overrideKeys.has(key)) process.env[key] = value;
+  }
 }

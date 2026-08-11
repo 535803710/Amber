@@ -10,6 +10,7 @@ const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const STATUS_SCRIPT = "scripts/status.mjs";
 const DEFAULT_HOME = resolve(SCRIPT_DIR, "..");
 const FALLBACK_HOME = "D:/project/Amber";
+const IGNORED_SUMMARIES = new Set(["bash"]);
 
 main().catch((error) => {
   console.error(error.message);
@@ -26,6 +27,10 @@ async function main() {
 
   const dryRun = consumeFlag(args, "--dry-run");
   const summary = args.join(" ").trim() || "Agent 提问";
+  if (IGNORED_SUMMARIES.has(summary.toLowerCase())) {
+    console.log(`Notification skipped: ${summary}`);
+    return;
+  }
   const message = `[需要操作] ${summary}`;
   const amberHome = resolveAmberHome();
 
