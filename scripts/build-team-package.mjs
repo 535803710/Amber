@@ -9,7 +9,8 @@ import {
   readdirSync,
   readFileSync,
   renameSync,
-  rmSync
+  rmSync,
+  writeFileSync
 } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -123,8 +124,16 @@ function copyEntries(sourceRoot, packageRoot, entries) {
     const source = resolve(sourceRoot, entry);
     const target = resolve(packageRoot, entry);
     mkdirSync(dirname(target), { recursive: true });
+    if (entry.toLowerCase().endsWith(".bat")) {
+      writeFileSync(target, normalizeWindowsBatchContent(readFileSync(source, "utf8")), "utf8");
+      continue;
+    }
     cpSync(source, target, { force: true });
   }
+}
+
+export function normalizeWindowsBatchContent(content) {
+  return content.replace(/\r?\n/g, "\r\n");
 }
 
 function compressDirectory(stagingRoot, destination) {

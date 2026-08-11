@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 
 import {
   collectTeamPackageEntries,
+  normalizeWindowsBatchContent,
   resolveArtifactPath
 } from "../scripts/build-team-package.mjs";
 
@@ -28,4 +29,11 @@ test("团队安装包名称使用 package.json 版本", () => {
     resolveArtifactPath(repositoryRoot, "0.1.0"),
     resolve(repositoryRoot, "dist/Amber-team-v0.1.0.zip")
   );
+});
+
+test("团队安装包中的批处理脚本使用 Windows 换行", () => {
+  const content = normalizeWindowsBatchContent("@echo off\necho 安装\n");
+
+  assert.equal(content, "@echo off\r\necho 安装\r\n");
+  assert.equal(/(?<!\r)\n/.test(content), false);
 });
