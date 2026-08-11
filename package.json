@@ -1,6 +1,6 @@
 {
   "name": "amber",
-  "version": "0.1.0",
+  "version": "1.3.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -35,6 +35,7 @@
     "autostart:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stop-watch-background.ps1",
     "dashboard": "node scripts/dashboard-server.mjs",
     "mcp:stdio": "node scripts/mcp-stdio-server.mjs",
+    "build": "node scripts/build-team-package.mjs",
     "team:install": "node scripts/team-setup.mjs install",
     "team:doctor": "node scripts/team-setup.mjs doctor",
     "team:uninstall": "node scripts/team-setup.mjs uninstall",

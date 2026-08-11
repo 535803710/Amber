@@ -1,6 +1,8 @@
 
 *.copilot
+.claude/
 .env
 .env.local
 .local/
 node_modules/
+dist/

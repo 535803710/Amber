@@ -14,7 +14,7 @@ import {
   COMMIT_TABLE_ID
 } from "./task-context/constants.mjs";
 
-const RUNTIME_FILES = [
+export const TEAM_RUNTIME_FILES = [
   ".env.example",
   "README.md",
   "amber.bat",
@@ -22,7 +22,7 @@ const RUNTIME_FILES = [
   "package.json",
   "uninstall.bat"
 ];
-const RUNTIME_DIRECTORIES = ["dashboard", "docs", "scripts"];
+export const TEAM_RUNTIME_DIRECTORIES = ["dashboard", "docs", "scripts"];
 const AMBER_HOOK_PATTERN = /[\\/]scripts[\\/]hooks[\\/](?:on-change-event|on-cursor-event|on-codex-event)\.mjs\b/i;
 
 export function installTeamSetup({ sourceRoot, targetRoot, userHome, now = new Date() }) {
@@ -201,12 +201,12 @@ function setupPaths(userHome) {
 function syncRuntime(sourceRoot, targetRoot) {
   if (sourceRoot === targetRoot) return;
   mkdirSync(targetRoot, { recursive: true });
-  for (const name of RUNTIME_FILES) {
+  for (const name of TEAM_RUNTIME_FILES) {
     const source = resolve(sourceRoot, name);
     if (!existsSync(source)) continue;
     cpSync(source, resolve(targetRoot, name), { force: true });
   }
-  for (const name of RUNTIME_DIRECTORIES) {
+  for (const name of TEAM_RUNTIME_DIRECTORIES) {
     const source = resolve(sourceRoot, name);
     if (!existsSync(source)) continue;
     cpSync(source, resolve(targetRoot, name), { recursive: true, force: true });
