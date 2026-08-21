@@ -1,20 +1,31 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, watch } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertWebhookSuccess, postJson } from "./change-record-worker.mjs";
 import {
   claimReadyCommitItems,
+  discoverRepositories,
   getCommitRecordStatus,
   markCommitFailed,
   markCommitSent,
   readyCommitItems,
+  readScannerState,
   replayFailedCommitEvents,
+  resolveCommitScanIntervals,
+  resolveScanRoots,
+  saveScannerState,
   scanCommitRecords,
+  scanRepository,
   writeCommitWorkerState
 } from "./lib/commit-records.mjs";
+import {
+  closeAllWatchers,
+  createRepositoryWatcher,
+  getWatcherStatus
+} from "./lib/commit-watch.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SCANNER_SCRIPT = resolve(dirname(fileURLToPath(import.meta.url)), "commit-record-scanner.mjs");
@@ -51,7 +62,6 @@ async function main() {
 
   const options = {
     dryRun,
-    scanIntervalMs: readPositiveInteger("COMMIT_RECORD_SCAN_INTERVAL_MS", DEFAULT_SCAN_INTERVAL_MS),
     deliveryIntervalMs: readPositiveInteger("COMMIT_RECORD_DELIVERY_INTERVAL_MS", DEFAULT_DELIVERY_INTERVAL_MS),
     deliveryBatchSize: readPositiveInteger("COMMIT_RECORD_DELIVERY_BATCH_SIZE", DEFAULT_DELIVERY_BATCH_SIZE)
   };
@@ -62,8 +72,9 @@ async function main() {
     return;
   }
 
+  const intervals = resolveCommitScanIntervals();
   console.log(
-    `提交记录 worker 已启动：扫描每 ${options.scanIntervalMs}ms，发送每 ${options.deliveryIntervalMs}ms，每批最多 ${options.deliveryBatchSize} 条`
+    `提交记录 worker 已启动：全量兜底每 ${intervals.reconcileIntervalMs}ms，发现每 ${intervals.discoveryIntervalMs}ms，发送每 ${options.deliveryIntervalMs}ms，每批最多 ${options.deliveryBatchSize} 条`
   );
   startCommitRecordWorker(options);
 }
@@ -71,34 +82,163 @@ async function main() {
 export function startCommitRecordWorker({
   rootDir = ROOT,
   dryRun = false,
-  scanIntervalMs = DEFAULT_SCAN_INTERVAL_MS,
+  scanIntervalMs,
   deliveryIntervalMs = DEFAULT_DELIVERY_INTERVAL_MS,
   deliveryBatchSize = DEFAULT_DELIVERY_BATCH_SIZE,
+  reconcileIntervalMs,
+  discoveryIntervalMs,
+  watchDebounceMs,
+  watchMaxWaitMs,
   scan = () => runScanProcess({ rootDir }),
   deliverBatch = () => deliver(dryRun, { rootDir, batchSize: deliveryBatchSize }),
+  writeState = (patch) => writeCommitWorkerState(patch, { rootDir }),
   onError = (error) => console.error(`提交记录 worker 出错：${error.message}`),
   timers = globalThis
 } = {}) {
+  const intervals = resolveCommitScanIntervals();
+  const reconcileMs = reconcileIntervalMs ?? scanIntervalMs ?? intervals.reconcileIntervalMs;
+  const discoveryMs = discoveryIntervalMs ?? intervals.discoveryIntervalMs;
+  const debounceMs = watchDebounceMs ?? intervals.watchDebounceMs;
+  const maxWaitMs = watchMaxWaitMs ?? intervals.watchMaxWaitMs;
+
   let scanning = false;
   let delivering = false;
+  const pendingRepoSet = new Set();
+  const registeredRepos = new Map();
+  let envWatcher = null;
+  let envDebounceTimer = null;
+  let lastDiscoveryAt = null;
+  let lastTargetScanAt = null;
 
-  const runScan = async () => {
-    if (scanning) return;
-    scanning = true;
-    writeCommitWorkerState({ lastHeartbeatAt: new Date().toISOString() }, { rootDir });
+  const writeHeartbeat = () => {
     try {
-      await scan();
+      writeState({ lastHeartbeatAt: new Date().toISOString() });
     } catch (error) {
       onError(error);
-    } finally {
-      scanning = false;
     }
+  };
+
+  const writeWatcherState = () => {
+    const status = getWatcherStatus();
+    try {
+      writeState({
+        watcher: {
+          status: status.status,
+          watchedRepositoryCount: status.watchedRepositoryCount,
+          lastDiscoveryAt,
+          lastEventAt: status.lastEventAt,
+          lastTargetScanAt,
+          errors: status.errors
+        },
+        reconcileIntervalMs: reconcileMs,
+        discoveryIntervalMs: discoveryMs
+      });
+    } catch (error) {
+      onError(error);
+    }
+  };
+
+  const scanSingleRepo = (repoPath) => {
+    try {
+      const state = readScannerState({ rootDir });
+      const result = scanRepository({ repoPath, state, rootDir });
+      state.lastScanAt = new Date().toISOString();
+      saveScannerState({ rootDir, state });
+      if (result.error) {
+        onError(new Error(`单仓扫描失败 ${repoPath}: ${result.error.message}`));
+      }
+    } catch (error) {
+      onError(error);
+    }
+  };
+
+  const drainPendingRepos = (alreadyLocked = false) => {
+    if (!alreadyLocked) {
+      if (scanning) return;
+      scanning = true;
+    }
+    try {
+      while (pendingRepoSet.size > 0) {
+        const [repoPath] = pendingRepoSet;
+        pendingRepoSet.delete(repoPath);
+        scanSingleRepo(repoPath);
+      }
+    } finally {
+      if (!alreadyLocked) {
+        scanning = false;
+      }
+    }
+  };
+
+  const onWatcherTrigger = (repoPath) => {
+    pendingRepoSet.add(repoPath);
+    if (!scanning) {
+      drainPendingRepos();
+    }
+  };
+
+  const runReconcile = async () => {
+    if (scanning) return;
+    scanning = true;
+    writeHeartbeat();
+    try {
+      await scan();
+      lastTargetScanAt = new Date().toISOString();
+    } catch (error) {
+      onError(error);
+    }
+    drainPendingRepos(true);
+    scanning = false;
+  };
+
+  const runDiscovery = () => {
+    const scanRoots = resolveScanRoots();
+    if (scanRoots.length === 0) {
+      if (registeredRepos.size > 0) {
+        for (const handle of registeredRepos.values()) {
+          try { handle.close(); } catch { /* ignore */ }
+        }
+        registeredRepos.clear();
+        closeAllWatchers();
+      }
+      lastDiscoveryAt = new Date().toISOString();
+      return;
+    }
+
+    const repositories = discoverRepositories(scanRoots);
+    const repoSet = new Set(repositories);
+
+    for (const repoPath of repositories) {
+      if (!registeredRepos.has(repoPath)) {
+        try {
+          const handle = createRepositoryWatcher({
+            repoPath,
+            debounceMs,
+            maxWaitMs,
+            onTrigger: onWatcherTrigger,
+            timers
+          });
+          registeredRepos.set(repoPath, handle);
+        } catch (error) {
+          onError(error);
+        }
+      }
+    }
+
+    for (const [repoPath, handle] of registeredRepos) {
+      if (!repoSet.has(repoPath)) {
+        try { handle.close(); } catch { /* ignore */ }
+        registeredRepos.delete(repoPath);
+      }
+    }
+
+    lastDiscoveryAt = new Date().toISOString();
   };
 
   const runDelivery = async () => {
     if (delivering) return;
     delivering = true;
-    writeCommitWorkerState({ lastHeartbeatAt: new Date().toISOString() }, { rootDir });
+    writeHeartbeat();
     try {
       await deliverBatch();
     } catch (error) {
@@ -108,17 +248,50 @@ export function startCommitRecordWorker({
     }
   };
 
-  void runScan();
+  const boot = async () => {
+    runDiscovery();
+    await runReconcile();
+  };
+
+  void boot();
   void runDelivery();
-  const scanTimer = timers.setInterval(() => void runScan(), scanIntervalMs);
+  const reconcileTimer = timers.setInterval(() => void runReconcile(), reconcileMs);
+  const discoveryTimer = timers.setInterval(() => {
+    runDiscovery();
+    writeWatcherState();
+  }, discoveryMs);
   const deliveryTimer = timers.setInterval(() => void runDelivery(), deliveryIntervalMs);
+
+  if (existsSync(resolve(rootDir, ".env.local"))) {
+    envWatcher = watch(rootDir, (eventType, filename) => {
+      if (!filename || !filename.includes(".env.local")) return;
+      if (envDebounceTimer) timers.clearTimeout(envDebounceTimer);
+      envDebounceTimer = timers.setTimeout(() => {
+        envDebounceTimer = null;
+        loadEnv(".env.local", new Set(["COMMIT_RECORD_SCAN_ROOTS"]), rootDir);
+        runDiscovery();
+        writeWatcherState();
+        void runReconcile();
+      }, 1000);
+    });
+  }
 
   return {
     stop() {
-      timers.clearInterval(scanTimer);
+      timers.clearInterval(reconcileTimer);
+      timers.clearInterval(discoveryTimer);
       timers.clearInterval(deliveryTimer);
+      if (envDebounceTimer) timers.clearTimeout(envDebounceTimer);
+      if (envWatcher) {
+        try { envWatcher.close(); } catch { /* ignore */ }
+      }
+      for (const handle of registeredRepos.values()) {
+        try { handle.close(); } catch { /* ignore */ }
+      }
+      registeredRepos.clear();
+      closeAllWatchers();
     },
-    runScan,
+    runScan: runReconcile,
     runDelivery
   };
 }
@@ -197,15 +370,15 @@ function readPositiveInteger(name, fallback) {
   return Number.isSafeInteger(value) && value > 0 ? value : fallback;
 }
 
-function loadEnv(name, overrideKeys = new Set()) {
-  const file = resolve(ROOT, name);
+function loadEnv(name, overrideKeys = new Set(), rootDir = ROOT) {
+  const file = resolve(rootDir, name);
   if (!existsSync(file)) return;
   for (const line of readFileSync(file, "utf8").split(/\r?\n/)) {
     const index = line.indexOf("=");
     if (index <= 0 || line.trim().startsWith("#")) continue;
     const key = line.slice(0, index).trim();
     if (process.env[key] === undefined || overrideKeys.has(key)) {
-      process.env[key] = line.slice(index + 1).trim().replace(/^['\"]|['\"]$/g, "");
+      process.env[key] = line.slice(index + 1).trim().replace(/^['"]|['"]$/g, "");
     }
   }
 }

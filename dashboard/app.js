@@ -68,6 +68,9 @@ const els = {
   commitRecordsPending: document.getElementById("commitRecordsPending"),
   commitRecordsFailed: document.getElementById("commitRecordsFailed"),
   commitLastScan: document.getElementById("commitLastScan"),
+  commitWatchStatus: document.getElementById("commitWatchStatus"),
+  commitWatchCount: document.getElementById("commitWatchCount"),
+  commitWatchLastEvent: document.getElementById("commitWatchLastEvent"),
   commitScanRoots: document.getElementById("commitScanRoots"),
   commitScanRootsLabel: document.getElementById("commitScanRootsLabel"),
   commitScanRootsHint: document.getElementById("commitScanRootsHint"),
@@ -222,6 +225,7 @@ const I18N = {
     healthCursor: "Cursor Hook",
     healthChatgpt: "ChatGPT Hook",
     healthGitScan: "Git scan",
+    healthGitWatch: "Git watch",
     healthAiDelivery: "AI delivery",
     healthGitDelivery: "Git delivery",
     healthTaskContext: "MCP queries",
@@ -366,6 +370,7 @@ const I18N = {
     healthCursor: "Cursor Hook",
     healthChatgpt: "ChatGPT Hook",
     healthGitScan: "Git 扫描",
+    healthGitWatch: "Git 监听",
     healthAiDelivery: "AI 投递",
     healthGitDelivery: "Git 投递",
     healthTaskContext: "MCP 查询",
@@ -676,6 +681,10 @@ function renderCommitRecords(records) {
   els.commitRecordsPending.textContent = String(records.pending ?? 0);
   els.commitRecordsFailed.textContent = String(records.failed ?? 0);
   els.commitLastScan.textContent = formatTime(records.lastScanAt);
+  const watcher = records.watcher || {};
+  els.commitWatchStatus.textContent = watcher.status || "-";
+  els.commitWatchCount.textContent = String(watcher.watchedRepositoryCount ?? 0);
+  els.commitWatchLastEvent.textContent = formatTime(watcher.lastEventAt);
   const roots = records.scanRoots || [];
   if (!choosingCommitScanRoot && document.activeElement !== els.commitScanRoots) {
     els.commitScanRoots.value = roots.join("\n");
@@ -691,6 +700,7 @@ function renderHealth(health) {
     cursor: "healthCursor",
     chatgpt: "healthChatgpt",
     gitScan: "healthGitScan",
+    gitWatch: "healthGitWatch",
     aiDelivery: "healthAiDelivery",
     gitDelivery: "healthGitDelivery",
     taskContext: "healthTaskContext",
@@ -772,6 +782,9 @@ function healthDetail(key, details) {
   }
   if (key === "gitScan") {
     return `${details.repositoryCount || 0} repos · ${formatTime(details.lastScanAt)}`;
+  }
+  if (key === "gitWatch") {
+    return `${details.watchedRepositoryCount || 0} watched · ${formatTime(details.lastEventAt)}`;
   }
   if (key === "taskContext") {
     return t("healthTaskContextDetail", details);

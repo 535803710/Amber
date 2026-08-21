@@ -85,6 +85,8 @@ Cursor 和 Codex/ChatGPT 的用户级 hook 会为每个完成轮次生成工作�
 
 `watch:all` 会同时跑一个 Git 提交记录 worker，只读扫描 `COMMIT_RECORD_SCAN_ROOTS` 配置目录下的 Git 仓库和本地分支。多个绝对路径用分号分隔，例如 `COMMIT_RECORD_SCAN_ROOTS=D:/project;E:/work`，未配置时不扫描。
 
+采集分三层：refs 文件事件驱动（默认防抖 750ms、最长等待 5s）、每 60 秒遍历配置目录发现新增/移除仓库、每 1 小时全量兜底补偿 watcher 漏报。不修改项目 Git Hook，零仓库入侵。调整间隔见 `.env.example` 中 `COMMIT_RECORD_RECONCILE_INTERVAL_MS` / `COMMIT_RECORD_DISCOVERY_INTERVAL_MS` / `COMMIT_RECORD_WATCH_DEBOUNCE_MS` / `COMMIT_RECORD_WATCH_MAX_WAIT_MS`。
+
 首次发现仓库只建立各分支的基线，之后发现新 commit 才生成事件、投递到 `FEISHU_COMMIT_WEBHOOK_URL`，历史提交不会批量回灌。`git push` 不产生事件，一次提交只对应一条记录。
 
 每条提交记录还会带上最近时间窗口内修改过相同文件的 AI 事件 ID。一次 AI 修改最终进了哪个 commit，对着看就行。
@@ -160,6 +162,9 @@ copy .env.example .env.local
 - `FEISHU_CHANGE_WEBHOOK_URL`（可选配 `FEISHU_CHANGE_WEBHOOK_TOKEN`）：AI 修改记录的投递地址，来自飞书多维表格「接收到 Webhook 时」自动化；
 - `FEISHU_COMMIT_WEBHOOK_URL`：Git 提交记录的投递地址，独立的 Base 自动化；
 - `COMMIT_RECORD_SCAN_ROOTS`：Git 提交扫描目录，多个绝对路径用分号分隔，不填则不扫描。
+- `COMMIT_RECORD_RECONCILE_INTERVAL_MS`：全量兜底扫描间隔，默认 3600000（1 小时）。旧变量 `COMMIT_RECORD_SCAN_INTERVAL_MS` 仍兼容。
+- `COMMIT_RECORD_DISCOVERY_INTERVAL_MS`：仓库发现间隔，默认 60000（60 秒）。
+- `COMMIT_RECORD_WATCH_DEBOUNCE_MS` / `COMMIT_RECORD_WATCH_MAX_WAIT_MS`：refs 文件事件防抖与最长等待，默认 750 / 5000。
 
 凭据只留在本机，`.env.local` 不提交仓库。
 

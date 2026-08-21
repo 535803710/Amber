@@ -16,9 +16,10 @@ async function main() {
   const payload = await readStdinJson();
 
   if (eventName === "PermissionRequest") {
-    await notifyAsk(
-      firstText(payload.reason, payload.message, payload.tool_name, "ChatGPT 等待你确认")
-    );
+    const message = firstText(payload.reason, payload.message);
+    if (message) {
+      await notifyAsk(message);
+    }
   }
 
   process.stdout.write("{}\n");

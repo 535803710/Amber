@@ -1,6 +1,15 @@
 #!/usr/bin/env node
 
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync
+} from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -14,6 +23,7 @@ import { readSettings } from "./lib/settings.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PID_FILE = resolve(ROOT, ".local/health-monitor.pid");
+const LOCK_FILE = resolve(ROOT, ".local/health-monitor.lock");
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().catch((error) => {
@@ -121,6 +131,14 @@ async function main() {
     return;
   }
 
+  const runtimeLock = acquireWorkerLock({ lockFile: LOCK_FILE });
+  if (!runtimeLock.acquired) {
+    mkdirSync(dirname(PID_FILE), { recursive: true });
+    writeFileSync(PID_FILE, `${runtimeLock.ownerPid}\n`, "utf8");
+    console.log(`健康监控 worker 已在运行：pid=${runtimeLock.ownerPid}`);
+    return;
+  }
+
   mkdirSync(dirname(PID_FILE), { recursive: true });
   writeFileSync(PID_FILE, `${process.pid}\n`, "utf8");
   const thresholds = resolveHealthThresholds(process.env);
@@ -128,21 +146,25 @@ async function main() {
   const stop = () => {
     if (stopping) return;
     stopping = true;
-    remove(PID_FILE);
     process.exitCode = 0;
   };
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
   console.log(`健康监控 worker 已启动：检查每 ${thresholds.checkIntervalMs}ms`);
 
-  while (!stopping) {
-    try {
-      const result = await runHealthCheck();
-      if (result.alertError) console.error(`健康告警发送失败：${result.alertError}`);
-    } catch (error) {
-      console.error(`健康检查失败：${error.message}`);
+  try {
+    while (!stopping) {
+      try {
+        const result = await runHealthCheck();
+        if (result.alertError) console.error(`健康告警发送失败：${result.alertError}`);
+      } catch (error) {
+        console.error(`健康检查失败：${error.message}`);
+      }
+      await sleep(thresholds.checkIntervalMs);
     }
-    await sleep(thresholds.checkIntervalMs);
+  } finally {
+    removeOwnedPid(PID_FILE, process.pid);
+    runtimeLock.release();
   }
 }
 
@@ -216,12 +238,59 @@ function writeJsonAtomic(filePath, value) {
   renameSync(tempPath, filePath);
 }
 
-function remove(filePath) {
+export function acquireWorkerLock({
+  lockFile,
+  pid = process.pid,
+  isAlive = isProcessAlive
+} = {}) {
+  if (!lockFile) throw new Error("健康监控锁文件路径不能为空");
+  mkdirSync(dirname(lockFile), { recursive: true });
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const descriptor = openSync(lockFile, "wx");
+      try {
+        writeFileSync(descriptor, `${pid}\n`, "utf8");
+      } finally {
+        closeSync(descriptor);
+      }
+      return {
+        acquired: true,
+        ownerPid: pid,
+        release: () => removeOwnedPid(lockFile, pid)
+      };
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      const ownerPid = Number.parseInt(readFileSafe(lockFile).trim(), 10);
+      if (Number.isInteger(ownerPid) && ownerPid > 0 && isAlive(ownerPid)) {
+        return { acquired: false, ownerPid, release: () => {} };
+      }
+      if (Number.isInteger(ownerPid) && ownerPid > 0) {
+        removeOwnedPid(lockFile, ownerPid);
+      } else {
+        removeFile(lockFile);
+      }
+    }
+  }
+
+  const ownerPid = Number.parseInt(readFileSafe(lockFile).trim(), 10);
+  return { acquired: false, ownerPid: ownerPid || null, release: () => {} };
+}
+
+function removeFile(filePath) {
   try {
     unlinkSync(filePath);
+    return true;
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
+    return false;
   }
+}
+
+function removeOwnedPid(filePath, expectedPid) {
+  const ownerPid = Number.parseInt(readFileSafe(filePath).trim(), 10);
+  if (ownerPid !== expectedPid) return false;
+  return removeFile(filePath);
 }
 
 function isProcessAlive(pid) {

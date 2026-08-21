@@ -250,6 +250,8 @@ test("commit scanner records the first commit created after an empty repository 
 });
 
 test("commit worker scans independently while a delivery batch is still running", async () => {
+  const savedRoots = process.env.COMMIT_RECORD_SCAN_ROOTS;
+  delete process.env.COMMIT_RECORD_SCAN_ROOTS;
   let scanCount = 0;
   let deliveryCount = 0;
   const worker = startCommitRecordWorker({
@@ -262,6 +264,7 @@ test("commit worker scans independently while a delivery batch is still running"
       deliveryCount += 1;
       await sleep(200);
     },
+    writeState: () => {},
     onError: (error) => {
       throw error;
     }
@@ -272,7 +275,51 @@ test("commit worker scans independently while a delivery batch is still running"
     assert.ok(scanCount >= 3, `expected at least 3 scans, got ${scanCount}`);
     assert.equal(deliveryCount, 1, "a running delivery batch must not overlap itself");
   } finally {
+    process.env.COMMIT_RECORD_SCAN_ROOTS = savedRoots;
     worker.stop();
+  }
+});
+
+test("commit worker keeps scanning when a heartbeat write fails", async () => {
+  const savedRoots = process.env.COMMIT_RECORD_SCAN_ROOTS;
+  delete process.env.COMMIT_RECORD_SCAN_ROOTS;
+  const state = mkdtempSync(resolve(tmpdir(), "amber-commit-heartbeat-"));
+  let heartbeatAttempts = 0;
+  let scanCount = 0;
+  let deliveryCount = 0;
+  const errors = [];
+  const worker = startCommitRecordWorker({
+    rootDir: state,
+    scanIntervalMs: 10_000,
+    deliveryIntervalMs: 10_000,
+    writeState: () => {
+      heartbeatAttempts += 1;
+      if (heartbeatAttempts === 1) {
+        const error = new Error("EPERM: worker-state.json is temporarily locked");
+        error.code = "EPERM";
+        throw error;
+      }
+    },
+    scan: () => {
+      scanCount += 1;
+    },
+    deliverBatch: () => {
+      deliveryCount += 1;
+    },
+    onError: (error) => errors.push(error)
+  });
+
+  try {
+    await sleep(20);
+    assert.equal(heartbeatAttempts, 2);
+    assert.equal(scanCount, 1);
+    assert.equal(deliveryCount, 1);
+    assert.equal(errors.length, 1);
+    assert.equal(errors[0].code, "EPERM");
+  } finally {
+    process.env.COMMIT_RECORD_SCAN_ROOTS = savedRoots;
+    worker.stop();
+    rmSync(state, { recursive: true, force: true });
   }
 });
 

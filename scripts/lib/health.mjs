@@ -17,8 +17,8 @@ export const DEFAULT_HEALTH_THRESHOLDS = Object.freeze({
   startupGraceMs: 2 * 60_000,
   gitScanWarnFloorMs: 30_000,
   gitScanCriticalFloorMs: 2 * 60_000,
-  gitScanWarnMultiplier: 6,
-  gitScanCriticalMultiplier: 24,
+  gitScanWarnMultiplier: 2,
+  gitScanCriticalMultiplier: 3,
   alertRepeatMs: 60 * 60_000
 });
 
@@ -51,14 +51,24 @@ export function collectHealthSnapshot({
       configured: commitStatus.scanConfigured,
       lastScanAt: commitStatus.lastScanAt,
       repositoryCount: commitStatus.repositoryCount,
-      scanIntervalMs: positiveInteger(env.COMMIT_RECORD_SCAN_INTERVAL_MS, 5_000),
+      scanIntervalMs: commitStatus.scanIntervalMs,
       repositoryErrors: scannerState.repositoryErrors || [],
-      repositoryErrorsAt: scannerState.repositoryErrorsAt || null
+      repositoryErrorsAt: scannerState.repositoryErrorsAt || null,
+      watcher: commitStatus.watcher
     },
     gitDelivery: {
       ...commitStatus,
       oldestPendingAt: commitQueue.oldestPendingAt,
       oldestProcessingAt: commitQueue.oldestProcessingAt
+    },
+    gitWatch: {
+      configured: commitStatus.scanConfigured,
+      status: commitStatus.watcher?.status || "inactive",
+      watchedRepositoryCount: commitStatus.watcher?.watchedRepositoryCount || 0,
+      lastEventAt: commitStatus.watcher?.lastEventAt || null,
+      lastDiscoveryAt: commitStatus.watcher?.lastDiscoveryAt || null,
+      lastTargetScanAt: commitStatus.watcher?.lastTargetScanAt || null,
+      errors: commitStatus.watcher?.errors || []
     },
     taskContext: {
       callCount: taskContext.callCount,
@@ -142,6 +152,7 @@ export function evaluateHealth(snapshot = {}, options = {}) {
     cursor: component("cursor", snapshot.hooks?.Cursor),
     chatgpt: component("chatgpt", snapshot.hooks?.ChatGPT),
     gitScan: component("gitScan", snapshot.gitScan),
+    gitWatch: component("gitWatch", snapshot.gitWatch),
     aiDelivery: component("aiDelivery", snapshot.aiDelivery),
     gitDelivery: component("gitDelivery", snapshot.gitDelivery),
     taskContext: component("taskContext", snapshot.taskContext),
@@ -155,6 +166,7 @@ export function evaluateHealth(snapshot = {}, options = {}) {
   evaluateDelivery("ai", components.aiDelivery, snapshot.aiDelivery || {}, issues, now, thresholds);
   evaluateDelivery("git", components.gitDelivery, snapshot.gitDelivery || {}, issues, now, thresholds);
   evaluateGitScan(components.gitScan, snapshot.gitScan || {}, issues, now, thresholds, startupGraceActive);
+  evaluateGitWatch(components.gitWatch, snapshot.gitWatch || {}, issues, now, thresholds, startupGraceActive);
   evaluateTaskContext(components.taskContext, snapshot.taskContext || {}, issues, now, thresholds);
   components.alertChannel.status = snapshot.alertChannel?.configured && snapshot.alertChannel?.enabled !== false
     ? "healthy"
@@ -343,7 +355,8 @@ function evaluateGitScan(target, scan, issues, now, thresholds, startupGraceActi
     lastScanAt: scan.lastScanAt || null,
     repositoryCount: scan.repositoryCount || 0,
     scanIntervalMs: scan.scanIntervalMs || null,
-    repositoryErrors: Array.isArray(scan.repositoryErrors) ? scan.repositoryErrors : []
+    repositoryErrors: Array.isArray(scan.repositoryErrors) ? scan.repositoryErrors : [],
+    watcher: scan.watcher || null
   };
   target.status = target.details.configured ? "healthy" : "disabled";
   if (!target.details.configured) return;
@@ -368,6 +381,41 @@ function evaluateGitScan(target, scan, issues, now, thresholds, startupGraceActi
       `Git 扫描有 ${target.details.repositoryErrors.length} 个仓库失败`,
       now,
       scan.repositoryErrorsAt
+    ));
+  }
+}
+
+function evaluateGitWatch(target, watch, issues, now, thresholds, startupGraceActive = false) {
+  target.details = {
+    configured: Boolean(watch.configured),
+    status: watch.status || "inactive",
+    watchedRepositoryCount: watch.watchedRepositoryCount || 0,
+    lastEventAt: watch.lastEventAt || null,
+    lastDiscoveryAt: watch.lastDiscoveryAt || null,
+    lastTargetScanAt: watch.lastTargetScanAt || null,
+    errors: Array.isArray(watch.errors) ? watch.errors : []
+  };
+  target.status = target.details.configured ? "healthy" : "disabled";
+  if (!target.details.configured) return;
+  if (startupGraceActive) return;
+
+  if (target.details.status === "down") {
+    issues.push(issue(
+      "git_watch_down",
+      target.key,
+      "critical",
+      "Git refs 文件监听全部不可用",
+      now,
+      target.details.errors[0]?.at || null
+    ));
+  } else if (target.details.status === "degraded") {
+    issues.push(issue(
+      "git_watch_degraded",
+      target.key,
+      "warning",
+      `Git refs 文件监听有 ${target.details.errors.length} 个错误`,
+      now,
+      target.details.errors[0]?.at || null
     ));
   }
 }

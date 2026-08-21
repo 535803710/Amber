@@ -12,9 +12,14 @@ import {
 export const COMMIT_RECORD_DIR = ".local/commit-records";
 const MAX_FILES = 200;
 
+export const DEFAULT_RECONCILE_INTERVAL_MS = 3_600_000;
+export const DEFAULT_DISCOVERY_INTERVAL_MS = 60_000;
+export const DEFAULT_WATCH_DEBOUNCE_MS = 750;
+export const DEFAULT_WATCH_MAX_WAIT_MS = 5_000;
+
 export function scanCommitRecords({ rootDir = process.cwd(), scanRoot, scanRoots } = {}) {
   const stateRoot = resolve(rootDir);
-  const state = readJson(resolve(commitRoot(stateRoot), "scanner-state.json")) || { repositories: {} };
+  const state = readScannerState({ rootDir: stateRoot });
   const configuredRoots = resolveScanRoots({ scanRoot, scanRoots });
   const repositories = discoverRepositories(configuredRoots);
   const scanErrors = [];
@@ -25,35 +30,11 @@ export function scanCommitRecords({ rootDir = process.cwd(), scanRoot, scanRoots
   }
   const found = [];
   for (const repoPath of repositories) {
-    try {
-      const refs = localRefs(repoPath);
-      const previous = state.repositories[repoPath];
-      if (!previous) {
-        state.repositories[repoPath] = { refs, refsReadOk: true, initializedAt: new Date().toISOString() };
-        continue;
-      }
-      if (previous.refsReadOk !== true && Object.keys(previous.refs || {}).length === 0) {
-        state.repositories[repoPath] = {
-          refs,
-          refsReadOk: true,
-          initializedAt: previous.initializedAt,
-          updatedAt: new Date().toISOString()
-        };
-        continue;
-      }
-      for (const [ref, nextSha] of Object.entries(refs)) {
-        const oldSha = previous.refs?.[ref] || "";
-        if (!nextSha || nextSha === oldSha) continue;
-        const commits = newCommits(repoPath, nextSha, oldSha, Object.values(previous.refs || {}));
-        for (const sha of commits) {
-          const event = buildCommitEvent(repoPath, sha, ref, oldSha ? "forward" : "new_ref", stateRoot);
-          if (event && enqueueCommitEvent(event, { rootDir: stateRoot }).queued) found.push(event);
-        }
-      }
-      state.repositories[repoPath] = { refs, refsReadOk: true, initializedAt: previous.initializedAt, updatedAt: new Date().toISOString() };
-    } catch (error) {
-      appendLog(stateRoot, `scan skipped ${repoPath}: ${error.message}`);
-      scanErrors.push({ repository: repoPath, message: String(error.message || error).slice(0, 500) });
+    const result = scanRepository({ repoPath, state, rootDir: stateRoot });
+    found.push(...result.events);
+    if (result.error) {
+      appendLog(stateRoot, `scan skipped ${repoPath}: ${result.error.message}`);
+      scanErrors.push({ repository: repoPath, message: result.error.message });
     }
   }
   writeJson(resolve(commitRoot(stateRoot), "scanner-state.json"), {
@@ -67,12 +48,65 @@ export function scanCommitRecords({ rootDir = process.cwd(), scanRoot, scanRoots
   return { repositories: repositories.length, events: found, scanRoots: configuredRoots };
 }
 
+export function scanRepository({ repoPath, state, rootDir }) {
+  const events = [];
+  try {
+    const refs = localRefs(repoPath);
+    const previous = state.repositories[repoPath];
+    if (!previous) {
+      state.repositories[repoPath] = { refs, refsReadOk: true, initializedAt: new Date().toISOString() };
+      return { events, error: null };
+    }
+    if (previous.refsReadOk !== true && Object.keys(previous.refs || {}).length === 0) {
+      state.repositories[repoPath] = {
+        refs,
+        refsReadOk: true,
+        initializedAt: previous.initializedAt,
+        updatedAt: new Date().toISOString()
+      };
+      return { events, error: null };
+    }
+    for (const [ref, nextSha] of Object.entries(refs)) {
+      const oldSha = previous.refs?.[ref] || "";
+      if (!nextSha || nextSha === oldSha) continue;
+      const commits = newCommits(repoPath, nextSha, oldSha, Object.values(previous.refs || {}));
+      for (const sha of commits) {
+        const event = buildCommitEvent(repoPath, sha, ref, oldSha ? "forward" : "new_ref", rootDir);
+        if (event && enqueueCommitEvent(event, { rootDir }).queued) events.push(event);
+      }
+    }
+    state.repositories[repoPath] = { refs, refsReadOk: true, initializedAt: previous.initializedAt, updatedAt: new Date().toISOString() };
+    return { events, error: null };
+  } catch (error) {
+    return { events, error: { message: String(error.message || error).slice(0, 500) } };
+  }
+}
+
+export function resolveCommitScanIntervals({ env = process.env } = {}) {
+  const fallbackReconcile = positiveInteger(env.COMMIT_RECORD_SCAN_INTERVAL_MS, DEFAULT_RECONCILE_INTERVAL_MS);
+  return {
+    reconcileIntervalMs: positiveInteger(env.COMMIT_RECORD_RECONCILE_INTERVAL_MS, fallbackReconcile),
+    discoveryIntervalMs: positiveInteger(env.COMMIT_RECORD_DISCOVERY_INTERVAL_MS, DEFAULT_DISCOVERY_INTERVAL_MS),
+    watchDebounceMs: positiveInteger(env.COMMIT_RECORD_WATCH_DEBOUNCE_MS, DEFAULT_WATCH_DEBOUNCE_MS),
+    watchMaxWaitMs: positiveInteger(env.COMMIT_RECORD_WATCH_MAX_WAIT_MS, DEFAULT_WATCH_MAX_WAIT_MS)
+  };
+}
+
+export function readScannerState({ rootDir = process.cwd() } = {}) {
+  return readJson(resolve(commitRoot(resolve(rootDir)), "scanner-state.json")) || { repositories: {} };
+}
+
+export function saveScannerState({ rootDir = process.cwd(), state } = {}) {
+  writeJson(resolve(commitRoot(resolve(rootDir)), "scanner-state.json"), state);
+}
+
 export function getCommitRecordStatus({ rootDir = process.cwd(), webhookUrl = process.env.FEISHU_COMMIT_WEBHOOK_URL } = {}) {
   const root = resolve(rootDir);
   const state = readJson(resolve(commitRoot(root), "worker-state.json")) || {};
   const scan = readJson(resolve(commitRoot(root), "scanner-state.json")) || {};
   const scanRoots = resolveScanRoots();
-  return { configured: Boolean(webhookUrl), scanConfigured: scanRoots.length > 0, scanRoots, pending: listQueue(root, "pending").length, processing: listQueue(root, "processing").length, failed: listQueue(root, "failed").length, sent: listQueue(root, "sent").length, lastHeartbeatAt: state.lastHeartbeatAt || null, lastSuccessAt: state.lastSuccessAt || null, lastError: state.lastError || null, lastScanAt: scan.lastScanAt || null, repositoryCount: scan.repositoryCount || 0, repositoryErrors: scan.repositoryErrors || [] };
+  const { reconcileIntervalMs } = resolveCommitScanIntervals();
+  return { configured: Boolean(webhookUrl), scanConfigured: scanRoots.length > 0, scanRoots, pending: listQueue(root, "pending").length, processing: listQueue(root, "processing").length, failed: listQueue(root, "failed").length, sent: listQueue(root, "sent").length, lastHeartbeatAt: state.lastHeartbeatAt || null, lastSuccessAt: state.lastSuccessAt || null, lastError: state.lastError || null, lastScanAt: scan.lastScanAt || null, repositoryCount: scan.repositoryCount || 0, repositoryErrors: scan.repositoryErrors || [], scanIntervalMs: reconcileIntervalMs, watcher: state.watcher || null };
 }
 
 export function parseScanRoots(value) {
@@ -175,7 +209,7 @@ export function markCommitFailed(item, error, { rootDir = process.cwd() } = {}) 
 export function replayFailedCommitEvents({ rootDir = process.cwd() } = {}) { const root = resolve(rootDir); let replayed = 0; for (const filePath of listQueue(root, "failed")) { const item = readJson(filePath); if (!item?.event?.event_id) continue; writeJson(queueFile(root, "pending", safeName(item.event.event_id)), { ...item, attempts: 0, nextAttemptAt: new Date().toISOString(), lastError: null }); remove(filePath); replayed++; } return { replayed }; }
 export function writeCommitWorkerState(patch, { rootDir = process.cwd() } = {}) { const file = resolve(commitRoot(resolve(rootDir)), "worker-state.json"); writeJson(file, { ...(readJson(file) || {}), ...patch }); }
 
-function buildCommitEvent(repo, sha, ref, refUpdateType, rootDir) {
+export function buildCommitEvent(repo, sha, ref, refUpdateType, rootDir) {
   const meta = git(repo, ["show", "-s", "--format=%H%x00%P%x00%aI%x00%an%x00%s%x00%B", sha]); if (!meta.ok) return null;
   const [commitSha, parentsLine, committedAt, authorName, subject, message] = meta.stdout.split("\0");
   const parents = parentsLine.trim() ? parentsLine.trim().split(" ") : [];
@@ -191,7 +225,7 @@ function buildCommitEvent(repo, sha, ref, refUpdateType, rootDir) {
   event.related_ai_event_ids = relatedAiEvents(rootDir, event); return event;
 }
 function relatedAiEvents(rootDir, event) { const cutoff = Date.now() - 7 * 86400000; const paths = new Set(event.changed_files.map((x) => x.path)); const dirs = ["sent", "pending", "failed"]; const ids = []; for (const dir of dirs) for (const file of listChangeQueue(rootDir, dir)) { const ai = readJson(file)?.event; if (ai?.repo_path === event.repo_path && new Date(ai.completed_at).getTime() >= cutoff && ai.changed_files?.some((x) => paths.has(x.path))) ids.push(ai.event_id); } return [...new Set(ids)].slice(0, 20); }
-function discoverRepositories(roots) {
+export function discoverRepositories(roots) {
   const result = new Set();
   const visit = (dir, depth) => {
     if (depth > 5 || !existsSync(dir)) return;
@@ -215,15 +249,16 @@ function isPathWithin(root, candidate) {
   const value = relative(resolve(root), resolve(candidate));
   return value === "" || (!isAbsolute(value) && !value.startsWith(`..${sep}`) && value !== "..");
 }
-function localRefs(repo) {
+export function localRefs(repo) {
   const result = git(repo, ["for-each-ref", "--format=%(refname) %(objectname)", "refs/heads"]);
   if (!result.ok) throw new Error("unable to read local Git refs");
   return Object.fromEntries(result.stdout.split(/\r?\n/).filter(Boolean).map((x) => x.split(" ")));
 }
-function newCommits(repo,next,old,known) { const args=["rev-list","--reverse",next]; if (old) args.push(`^${old}`); else for (const sha of known.filter(Boolean)) args.push(`^${sha}`); return git(repo,args).stdout.split(/\r?\n/).filter(Boolean); }
-function parseNames(text) { return text.split(/\r?\n/).filter(Boolean).map((line)=>{const p=line.split("\t"), s=(p[0]||"M")[0]; return (s==="R"||s==="C")&&p.length>2?{status:s,old_path:p[1],path:p[2]}:{status:s,path:p[1]||p[0]};}); }
-function parseStats(text) { let additions=0,deletions=0; for(const line of text.split(/\r?\n/)){const [a,d]=line.split("\t"); additions+=Number(a)||0; deletions+=Number(d)||0;} return {additions,deletions}; }
-function classifyCommit(subject,message) { const text=`${subject}\n${message}`; if (/This reverts commit|^Revert /m.test(text)) return "revert"; if (/cherry picked from commit/i.test(text)) return "cherry_pick"; return "normal"; }
-function sanitizeRemote(value) { try { const url=new URL(value); url.username=""; url.password=""; return url.toString(); } catch { return value.replace(/^[^@]+@/,""); } }
-function git(repo,args){const result=spawnSync("git",["-C",repo,...args],{encoding:"utf8",windowsHide:true,maxBuffer:20*1024*1024});return {ok:result.status===0&&!result.error,stdout:String(result.stdout||"")};}
-function commitRoot(root){return resolve(root,COMMIT_RECORD_DIR);} function queueRoot(root){return resolve(commitRoot(root),"queue");} function queueFile(root,name,id){return resolve(queueRoot(root),name,`${id}.json`);} function listQueue(root,name){const dir=resolve(queueRoot(root),name); return existsSync(dir)?readdirSync(dir,{withFileTypes:true}).filter(x=>x.isFile()&&x.name.endsWith(".json")).map(x=>resolve(dir,x.name)):[];} function listChangeQueue(root,name){const dir=resolve(root,".local/change-records/queue",name); return existsSync(dir)?readdirSync(dir,{withFileTypes:true}).filter(x=>x.isFile()&&x.name.endsWith(".json")).map(x=>resolve(dir,x.name)):[];} function ensureQueues(root){ensureOutboxDirs(queueRoot(root));} function safeName(s){return String(s).replace(/[^A-Za-z0-9._-]/g,"-");} function readJson(file){try{return JSON.parse(readFileSync(file,"utf8"));}catch{return null;}} function writeJson(file,value){mkdirSync(dirname(file),{recursive:true});const temp=`${file}.${process.pid}.${Date.now()}.tmp`;writeFileSync(temp,JSON.stringify(value,null,2)+"\n","utf8");renameSync(temp,file);} function withoutClaim(envelope){const result={...envelope}; delete result.claimedAt; return result;} function remove(file){try{unlinkSync(file);}catch(error){if(error.code!=="ENOENT")throw error;}} function appendLog(root,message){const file=resolve(commitRoot(root),"commit-records.log");mkdirSync(dirname(file),{recursive:true});writeFileSync(file,`[${new Date().toISOString()}] ${message}\n`,{encoding:"utf8",flag:"a"});}
+export function newCommits(repo, next, old, known) { const args = ["rev-list", "--reverse", next]; if (old) args.push(`^${old}`); else for (const sha of known.filter(Boolean)) args.push(`^${sha}`); return git(repo, args).stdout.split(/\r?\n/).filter(Boolean); }
+function parseNames(text) { return text.split(/\r?\n/).filter(Boolean).map((line) => { const p = line.split("\t"), s = (p[0] || "M")[0]; return (s === "R" || s === "C") && p.length > 2 ? { status: s, old_path: p[1], path: p[2] } : { status: s, path: p[1] || p[0] }; }); }
+function parseStats(text) { let additions = 0, deletions = 0; for (const line of text.split(/\r?\n/)) { const [a, d] = line.split("\t"); additions += Number(a) || 0; deletions += Number(d) || 0; } return { additions, deletions }; }
+function classifyCommit(subject, message) { const text = `${subject}\n${message}`; if (/This reverts commit|^Revert /m.test(text)) return "revert"; if (/cherry picked from commit/i.test(text)) return "cherry_pick"; return "normal"; }
+function sanitizeRemote(value) { try { const url = new URL(value); url.username = ""; url.password = ""; return url.toString(); } catch { return value.replace(/^[^@]+@/, ""); } }
+function git(repo, args) { const result = spawnSync("git", ["-C", repo, ...args], { encoding: "utf8", windowsHide: true, maxBuffer: 20 * 1024 * 1024 }); return { ok: result.status === 0 && !result.error, stdout: String(result.stdout || "") }; }
+function commitRoot(root) { return resolve(root, COMMIT_RECORD_DIR); } function queueRoot(root) { return resolve(commitRoot(root), "queue"); } function queueFile(root, name, id) { return resolve(queueRoot(root), name, `${id}.json`); } function listQueue(root, name) { const dir = resolve(queueRoot(root), name); return existsSync(dir) ? readdirSync(dir, { withFileTypes: true }).filter((x) => x.isFile() && x.name.endsWith(".json")).map((x) => resolve(dir, x.name)) : []; } function listChangeQueue(root, name) { const dir = resolve(root, ".local/change-records/queue", name); return existsSync(dir) ? readdirSync(dir, { withFileTypes: true }).filter((x) => x.isFile() && x.name.endsWith(".json")).map((x) => resolve(dir, x.name)) : []; } function ensureQueues(root) { ensureOutboxDirs(queueRoot(root)); } function safeName(s) { return String(s).replace(/[^A-Za-z0-9._-]/g, "-"); } function readJson(file) { try { return JSON.parse(readFileSync(file, "utf8")); } catch { return null; } } function writeJson(file, value) { mkdirSync(dirname(file), { recursive: true }); const temp = `${file}.${process.pid}.${Date.now()}.tmp`; writeFileSync(temp, JSON.stringify(value, null, 2) + "\n", "utf8"); renameSync(temp, file); } function withoutClaim(envelope) { const result = { ...envelope }; delete result.claimedAt; return result; } function remove(file) { try { unlinkSync(file); } catch (error) { if (error.code !== "ENOENT") throw error; } } function appendLog(root, message) { const file = resolve(commitRoot(root), "commit-records.log"); mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, `[${new Date().toISOString()}] ${message}\n`, { encoding: "utf8", flag: "a" }); }
+function positiveInteger(value, fallback) { const number = Number(value); return Number.isInteger(number) && number > 0 ? number : fallback; }

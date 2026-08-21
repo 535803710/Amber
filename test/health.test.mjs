@@ -10,13 +10,48 @@ import {
   resolveHealthThresholds
 } from "../scripts/lib/health.mjs";
 import { planHealthAlerts } from "../scripts/lib/health-alerts.mjs";
-import { runHealthCheck } from "../scripts/health-monitor-worker.mjs";
+import { acquireWorkerLock, runHealthCheck } from "../scripts/health-monitor-worker.mjs";
 import {
   archiveAbortedBaselines,
   archiveStaleBaselines
 } from "../scripts/lib/health-reset.mjs";
 
 const NOW = Date.parse("2026-08-01T12:00:00.000Z");
+
+test("health worker lock rejects duplicate instances and recovers stale owners", () => {
+  const root = mkdtempSync(resolve(tmpdir(), "amber-health-lock-"));
+  const lockFile = resolve(root, "health-monitor.lock");
+  const first = acquireWorkerLock({
+    lockFile,
+    pid: 101,
+    isAlive: (pid) => pid === 101
+  });
+  const duplicate = acquireWorkerLock({
+    lockFile,
+    pid: 202,
+    isAlive: (pid) => pid === 101
+  });
+
+  assert.equal(first.acquired, true);
+  assert.equal(duplicate.acquired, false);
+  assert.equal(duplicate.ownerPid, 101);
+  duplicate.release();
+  assert.equal(existsSync(lockFile), true);
+  first.release();
+  assert.equal(existsSync(lockFile), false);
+
+  writeFileSync(lockFile, "303\n", "utf8");
+  const recovered = acquireWorkerLock({
+    lockFile,
+    pid: 404,
+    isAlive: () => false
+  });
+  assert.equal(recovered.acquired, true);
+  assert.equal(recovered.ownerPid, 404);
+  assert.equal(readFileSync(lockFile, "utf8").trim(), "404");
+  recovered.release();
+  assert.equal(existsSync(lockFile), false);
+});
 
 test("health evaluator keeps inactive optional components disabled", () => {
   const health = evaluateHealth({
@@ -99,6 +134,54 @@ test("health evaluator reports git scan lag and repository errors", () => {
   assert.equal(health.status, "critical");
   assert.ok(health.issues.some((issue) => issue.id === "git_scan_stale"));
   assert.ok(health.issues.some((issue) => issue.id === "git_scan_errors"));
+});
+
+test("health evaluator reports git watch degraded and down states", () => {
+  const degraded = evaluateHealth({
+    now: NOW,
+    runtime: { expectedRunning: true, running: true },
+    gitWatch: {
+      configured: true,
+      status: "degraded",
+      watchedRepositoryCount: 2,
+      errors: [{ repository: "D:/repo", message: "EPERM", at: new Date(NOW).toISOString() }]
+    }
+  });
+  assert.ok(degraded.issues.some((issue) => issue.id === "git_watch_degraded"));
+  assert.equal(degraded.components.gitWatch.status, "warning");
+
+  const down = evaluateHealth({
+    now: NOW,
+    runtime: { expectedRunning: true, running: true },
+    gitWatch: {
+      configured: true,
+      status: "down",
+      watchedRepositoryCount: 1,
+      errors: [{ repository: "D:/repo", message: "EPERM", at: new Date(NOW).toISOString() }]
+    }
+  });
+  assert.ok(down.issues.some((issue) => issue.id === "git_watch_down"));
+  assert.equal(down.components.gitWatch.status, "critical");
+
+  const inactive = evaluateHealth({
+    now: NOW,
+    runtime: { expectedRunning: true, running: true },
+    gitWatch: {
+      configured: true,
+      status: "inactive",
+      watchedRepositoryCount: 0
+    }
+  });
+  assert.equal(inactive.issues.some((issue) => issue.id === "git_watch_down"), false);
+  assert.equal(inactive.issues.some((issue) => issue.id === "git_watch_degraded"), false);
+  assert.equal(inactive.components.gitWatch.status, "healthy");
+
+  const disabled = evaluateHealth({
+    now: NOW,
+    runtime: { expectedRunning: true, running: true },
+    gitWatch: { configured: false }
+  });
+  assert.equal(disabled.components.gitWatch.status, "disabled");
 });
 
 test("health evaluator suppresses runtime and git scan alerts during startup grace", () => {
