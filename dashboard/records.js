@@ -10,6 +10,7 @@ const els = {
   count: document.getElementById("recordCount"),
   list: document.getElementById("recordList"),
   pagination: document.getElementById("pagination"),
+  refreshButton: document.getElementById("refreshRecords"),
   themeToggle: document.getElementById("themeToggle"),
   langToggle: document.getElementById("langToggle")
 };
@@ -22,6 +23,8 @@ const I18N = {
     themeLight: "主题 浅色",
     themeDark: "主题 深色",
     langToggle: "语言 en",
+    refresh: "刷新",
+    refreshBusy: "刷新中…",
     status: { all: "全部", pending: "待发送", sent: "已发送", failed: "失败" },
     count: (shown, total) => `显示 ${shown} / ${total} 条记录`,
     loading: "正在加载记录…",
@@ -62,6 +65,8 @@ const I18N = {
     themeLight: "theme light",
     themeDark: "theme dark",
     langToggle: "lang zh",
+    refresh: "refresh",
+    refreshBusy: "refreshing...",
     status: { all: "all", pending: "pending", sent: "sent", failed: "failed" },
     count: (shown, total) => `showing ${shown} / ${total} records`,
     loading: "Loading records…",
@@ -99,6 +104,8 @@ const I18N = {
 
 let language = resolveLanguage();
 let state = { status: "all", page: 1 };
+let hasLoadedRecords = false;
+let refreshInFlight = null;
 
 function resolveLanguage() {
   const stored = localStorage.getItem(LANG_KEY);
@@ -134,16 +141,32 @@ function applyLanguage() {
     link.classList.toggle("active", link.dataset.nav === RECORD_TYPE);
   });
   applyTheme(resolveTheme());
+  updateRefreshButton();
 }
 
-async function refreshRecords() {
-  els.list.replaceChildren(createText("p", "record-message", t("loading")));
-  els.pagination.replaceChildren();
+function refreshRecords({ preserveList = hasLoadedRecords } = {}) {
+  if (refreshInFlight) return refreshInFlight;
+
+  if (!preserveList) {
+    els.list.replaceChildren(createText("p", "record-message", t("loading")));
+    els.pagination.replaceChildren();
+  }
+
+  updateRefreshButton(true);
+  refreshInFlight = loadRecords().finally(() => {
+    refreshInFlight = null;
+    updateRefreshButton();
+  });
+  return refreshInFlight;
+}
+
+async function loadRecords() {
+  const requestedState = { ...state };
 
   try {
     const params = new URLSearchParams({
-      status: state.status,
-      page: String(state.page),
+      status: requestedState.status,
+      page: String(requestedState.page),
       pageSize: String(PAGE_SIZE)
     });
     const [response, syncResponse] = await Promise.all([
@@ -153,16 +176,27 @@ async function refreshRecords() {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || t("loadFailed"));
     const sync = syncResponse ? await syncResponse.json() : null;
-    state = { status: state.status, page: data.pagination.page };
+    state = { status: requestedState.status, page: data.pagination.page };
     renderFilters(data.counts);
     renderCommitActions(sync);
     renderRecords(data.items);
     renderPagination(data.pagination);
     els.count.textContent = t("count", data.items.length, data.pagination.totalItems);
+    hasLoadedRecords = true;
   } catch (error) {
-    els.count.textContent = "";
-    els.list.replaceChildren(createText("p", "record-message error-message", `${t("loadFailed")}：${error.message}`));
+    if (hasLoadedRecords) {
+      els.count.textContent = `${t("loadFailed")}：${error.message}`;
+    } else {
+      els.count.textContent = "";
+      els.list.replaceChildren(createText("p", "record-message error-message", `${t("loadFailed")}：${error.message}`));
+    }
   }
+}
+
+function updateRefreshButton(busy = Boolean(refreshInFlight)) {
+  if (!els.refreshButton) return;
+  els.refreshButton.disabled = busy;
+  els.refreshButton.textContent = t(busy ? "refreshBusy" : "refresh");
 }
 
 function renderFilters(counts) {
@@ -361,9 +395,9 @@ els.langToggle.addEventListener("click", () => {
   applyLanguage();
   refreshRecords();
 });
+els.refreshButton?.addEventListener("click", () => {
+  refreshRecords({ preserveList: true });
+});
 
 applyLanguage();
 refreshRecords();
-if (RECORD_TYPE === "commit") {
-  setInterval(() => refreshRecords(), 2_000);
-}
