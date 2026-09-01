@@ -71,18 +71,27 @@ test("health evaluator keeps inactive optional components disabled", () => {
 });
 
 test("health evaluator reports a stale baseline by severity", () => {
+  const startedAt = new Date(NOW - DEFAULT_HEALTH_THRESHOLDS.baselineCriticalMs).toISOString();
   const warning = evaluateHealth({
     now: NOW,
     runtime: { expectedRunning: true, running: true },
     hooks: {
       ChatGPT: {
         activeBaselines: 1,
-        oldestBaselineAt: new Date(NOW - DEFAULT_HEALTH_THRESHOLDS.baselineWarnMs).toISOString()
+        oldestBaselineAt: new Date(NOW - DEFAULT_HEALTH_THRESHOLDS.baselineWarnMs).toISOString(),
+        oldestBaseline: {
+          key: "warning-session-warning-turn",
+          turnId: "warning-turn",
+          project: "sample-warning",
+          startedAt: new Date(NOW - DEFAULT_HEALTH_THRESHOLDS.baselineWarnMs).toISOString()
+        }
       }
     }
   });
   assert.equal(warning.status, "warning");
   assert.equal(warning.issues[0].id, "chatgpt_baseline_stale");
+  assert.match(warning.issues[0].message, /sample-warning/);
+  assert.match(warning.issues[0].message, /warning-turn/);
 
   const critical = evaluateHealth({
     now: NOW,
@@ -90,12 +99,21 @@ test("health evaluator reports a stale baseline by severity", () => {
     hooks: {
       ChatGPT: {
         activeBaselines: 1,
-        oldestBaselineAt: new Date(NOW - DEFAULT_HEALTH_THRESHOLDS.baselineCriticalMs).toISOString()
+        oldestBaselineAt: startedAt,
+        oldestBaseline: {
+          key: "session-1-turn-1",
+          turnId: "turn-1",
+          project: "sample-project",
+          startedAt
+        }
       }
     }
   });
   assert.equal(critical.status, "critical");
   assert.equal(critical.issues[0].severity, "critical");
+  assert.match(critical.issues[0].message, /sample-project/);
+  assert.match(critical.issues[0].message, /turn-1/);
+  assert.match(critical.issues[0].message, /2026-08-01T10:00:00.000Z/);
 });
 
 test("health evaluator detects stopped runtime and delivery backlog", () => {
@@ -472,6 +490,61 @@ test("health reconciliation archives aborted ChatGPT baselines and keeps complet
   });
   const health = evaluateHealth(snapshot, { now: NOW });
   assert.equal(health.issues.some((issue) => issue.id === "chatgpt_baseline_stale"), true);
+});
+
+test("health reconciliation archives internal memory writer baselines without session files", () => {
+  const root = mkdtempSync(resolve(tmpdir(), "amber-health-memory-writer-"));
+  const codexHome = resolve(root, ".codex");
+  const baselineDir = resolve(root, ".local/change-records/baselines/chatgpt");
+  const internalFile = resolve(baselineDir, "memory-session-memory-turn.json");
+  const ordinaryFile = resolve(baselineDir, "ordinary-session-ordinary-turn.json");
+  const startedAt = new Date(NOW - DEFAULT_HEALTH_THRESHOLDS.baselineWarnMs).toISOString();
+  mkdirSync(baselineDir, { recursive: true });
+  writeFileSync(internalFile, JSON.stringify({
+    source: "ChatGPT",
+    sessionId: "memory-session",
+    turnId: "memory-turn",
+    key: "memory-session-memory-turn",
+    cwd: resolve(codexHome, "memories", "skills", "writer"),
+    repoRoot: resolve(codexHome, "memories"),
+    project: "memories",
+    prompt: "## Memory Writing Agent: Phase 2 (Consolidation)",
+    startedAt
+  }), "utf8");
+  writeFileSync(ordinaryFile, JSON.stringify({
+    source: "ChatGPT",
+    sessionId: "ordinary-session",
+    turnId: "ordinary-turn",
+    key: "ordinary-session-ordinary-turn",
+    cwd: resolve(root, "project"),
+    repoRoot: resolve(root, "project"),
+    project: "project",
+    prompt: "normal task",
+    startedAt
+  }), "utf8");
+
+  const result = archiveAbortedBaselines({ rootDir: root, codexHome, now: NOW });
+
+  assert.equal(result.archivedCount, 1);
+  assert.equal(result.entries[0].reason, "internal_memory_agent");
+  assert.equal(existsSync(internalFile), false);
+  assert.equal(existsSync(ordinaryFile), true);
+
+  const snapshot = collectHealthSnapshot({
+    rootDir: root,
+    now: NOW,
+    env: { FEISHU_WEBHOOK_URL: "", COMMIT_RECORD_SCAN_ROOTS: "" },
+    runtime: { expectedRunning: false, running: false }
+  });
+  assert.deepEqual(snapshot.hooks.ChatGPT.oldestBaseline, {
+    key: "ordinary-session-ordinary-turn",
+    sessionId: "ordinary-session",
+    turnId: "ordinary-turn",
+    project: "project",
+    repoRoot: resolve(root, "project"),
+    promptSummary: "normal task",
+    startedAt
+  });
 });
 
 test("health worker reconciles aborted ChatGPT turns before evaluating alerts", async () => {

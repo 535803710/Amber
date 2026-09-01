@@ -252,6 +252,7 @@ function evaluateHook(source, target, hook, issues, now, thresholds) {
     lastSentAt: hook.lastSentAt || null,
     activeBaselines: hook.activeBaselines || 0,
     oldestBaselineAt: hook.oldestBaselineAt || null,
+    oldestBaseline: hook.oldestBaseline || null,
     lastErrorAt: hook.lastErrorAt || null,
     lastError: hook.lastError || null
   };
@@ -277,13 +278,14 @@ function evaluateHook(source, target, hook, issues, now, thresholds) {
   }
 
   const age = ageOf(target.details.oldestBaselineAt, now);
+  const baselineContext = formatBaselineContext(target.details.oldestBaseline);
   if (target.details.activeBaselines > 0 && age !== null) {
     if (age >= thresholds.baselineCriticalMs) {
       issues.push(issue(
         `${source.toLowerCase()}_baseline_stale`,
         target.key,
         "critical",
-        `${source} 存在超过 ${formatDuration(thresholds.baselineCriticalMs)} 未完成的修改轮次`,
+        `${source} 存在超过 ${formatDuration(thresholds.baselineCriticalMs)} 未完成的修改轮次${baselineContext}`,
         now,
         target.details.oldestBaselineAt
       ));
@@ -292,7 +294,7 @@ function evaluateHook(source, target, hook, issues, now, thresholds) {
         `${source.toLowerCase()}_baseline_stale`,
         target.key,
         "warning",
-        `${source} 存在长时间未完成的修改轮次`,
+        `${source} 存在长时间未完成的修改轮次${baselineContext}`,
         now,
         target.details.oldestBaselineAt
       ));
@@ -519,11 +521,12 @@ function collectHookHealth(rootDir, now) {
       .filter((fileName) => fileName.endsWith(".json"))
       .map((fileName) => readJson(resolve(baselineDir, fileName)))
       .filter(Boolean);
+    const oldestBaseline = baselines
+      .filter((item) => Number.isFinite(Date.parse(item.startedAt)))
+      .sort((left, right) => String(left.startedAt).localeCompare(String(right.startedAt)))[0] || null;
     result[source].activeBaselines = baselines.length;
-    result[source].oldestBaselineAt = baselines
-      .map((item) => item.startedAt)
-      .filter((value) => Number.isFinite(Date.parse(value)))
-      .sort()[0] || null;
+    result[source].oldestBaselineAt = oldestBaseline?.startedAt || null;
+    result[source].oldestBaseline = oldestBaseline ? summarizeBaseline(oldestBaseline) : null;
   }
   return result;
 }
@@ -567,6 +570,7 @@ function emptyHookHealth() {
     lastSentAt: null,
     activeBaselines: 0,
     oldestBaselineAt: null,
+    oldestBaseline: null,
     lastErrorAt: null,
     lastError: null
   };
@@ -662,6 +666,31 @@ function moreSevere(current, next) {
 function formatDuration(ms) {
   const minutes = Math.round(ms / 60_000);
   return minutes >= 60 ? `${Math.round(minutes / 60)} 小时` : `${minutes} 分钟`;
+}
+
+function formatBaselineContext(baseline) {
+  if (!baseline) return "";
+  const project = compactText(baseline.project, 80) || "未知项目";
+  const turnId = compactText(baseline.turnId || baseline.key, 80) || "未知轮次";
+  const startedAt = validIso(baseline.startedAt);
+  return `：${project}，轮次 ${turnId}${startedAt ? `，开始于 ${startedAt}` : ""}`;
+}
+
+function summarizeBaseline(baseline) {
+  return {
+    key: compactText(baseline.key, 200) || null,
+    sessionId: compactText(baseline.sessionId, 200) || null,
+    turnId: compactText(baseline.turnId, 200) || null,
+    project: compactText(baseline.project, 120) || null,
+    repoRoot: compactText(baseline.repoRoot, 500) || null,
+    promptSummary: compactText(String(baseline.prompt || "").split(/\r?\n/)[0], 160) || null,
+    startedAt: validIso(baseline.startedAt)
+  };
+}
+
+function compactText(value, limit) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  return text.length > limit ? `${text.slice(0, limit - 1)}…` : text;
 }
 
 function positiveInteger(value, fallback) {

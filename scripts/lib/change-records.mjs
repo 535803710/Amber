@@ -16,6 +16,7 @@ import {
   countOutboxFiles,
   ensureOutboxDirs
 } from "./file-outbox.mjs";
+import { extractChangePrompt, ignoredChangeReason } from "./change-record-policy.mjs";
 
 export const CHANGE_RECORD_DIR = ".local/change-records";
 export const RETRY_DELAYS_MS = [10_000, 30_000, 120_000, 600_000, 1_800_000, 1_800_000, 1_800_000, 1_800_000];
@@ -30,6 +31,14 @@ export function beginChangeTurn(input, options = {}) {
   const source = normalizeSource(input.source);
   const cwd = resolve(input.cwd || process.cwd());
   const identity = resolveTurnIdentity(input);
+  const ignoredReason = ignoredChangeReason(
+    { ...input, source, cwd },
+    { codexHome: options.codexHome }
+  );
+  if (ignoredReason) {
+    appendChangeLog(rootDir, `${source} begin skipped: ${ignoredReason} (${cwd})`);
+    return { ok: true, skipped: ignoredReason };
+  }
   const repo = inspectRepository(cwd);
 
   if (!repo) {
@@ -499,11 +508,7 @@ function readGitAuthor(repoRoot) {
 }
 
 function extractPrompt(input) {
-  const messages = input.input_messages || input["input-messages"];
-  if (Array.isArray(messages)) {
-    return messages.map((item) => (typeof item === "string" ? item : item?.content || "")).filter(Boolean).join("\n");
-  }
-  return firstText(input.prompt, input.user_message, input.userMessage, input.message, input.input);
+  return extractChangePrompt(input);
 }
 
 function extractResult(input) {

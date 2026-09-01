@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, renameSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
+import { ignoredChangeReason } from "./change-record-policy.mjs";
 
 const SOURCES = Object.freeze(["cursor", "chatgpt"]);
 const DEFAULT_MINIMUM_AGE_MS = 30 * 60_000;
@@ -26,14 +27,19 @@ export function archiveAbortedBaselines({
     const filePath = resolve(baselineDir, fileName);
     const baseline = readJson(filePath);
     const startedAt = Date.parse(baseline?.startedAt || "");
-    const terminalEvent = baseline && Number.isFinite(startedAt) && startedAt <= cutoff
+    const oldEnough = Number.isFinite(startedAt) && startedAt <= cutoff;
+    const ignoredReason = baseline && oldEnough
+      ? ignoredChangeReason(baseline, { codexHome })
+      : null;
+    const terminalEvent = baseline && oldEnough && !ignoredReason
       ? findCodexTerminalEvent(baseline, codexHome)
       : null;
+    const archiveReason = ignoredReason || terminalEvent;
     if (
       !baseline ||
       !Number.isFinite(startedAt) ||
       startedAt > cutoff ||
-      !terminalEvent
+      !archiveReason
     ) continue;
 
     const destinationDir = resolve(archiveRoot, "chatgpt");
@@ -45,7 +51,7 @@ export function archiveAbortedBaselines({
       fileName,
       key: baseline.key || fileName.replace(/\.json$/i, ""),
       startedAt: baseline.startedAt || null,
-      reason: terminalEvent,
+      reason: archiveReason,
       archivedPath: destination
     });
   }

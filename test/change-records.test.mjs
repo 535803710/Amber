@@ -43,6 +43,9 @@ import {
   normalizeHookPayload,
   parseHookJson
 } from "../scripts/hooks/on-change-event.mjs";
+import { extractChangePrompt, ignoredChangeReason } from "../scripts/lib/change-record-policy.mjs";
+import { archiveAbortedBaselines } from "../scripts/lib/health-reset.mjs";
+import { DEFAULT_HEALTH_THRESHOLDS } from "../scripts/lib/health.mjs";
 
 test("hook payload parser accepts a UTF-8 BOM", () => {
   assert.deepEqual(
@@ -582,6 +585,186 @@ test("duplicate begin for the same turn preserves the original baseline", () => 
       { status: "A", path: "late.txt" }
     ]);
   });
+});
+
+test("internal Codex memory writer does not create a change baseline", () => {
+  const root = mkdtempSync(resolve(tmpdir(), "amber-memory-writer-"));
+  const codexHome = resolve(root, ".codex");
+  const repo = resolve(codexHome, "memories");
+  const state = resolve(root, "state");
+  mkdirSync(repo, { recursive: true });
+  git(repo, ["init"]);
+  git(repo, ["config", "user.email", "test@example.com"]);
+  git(repo, ["config", "user.name", "Test"]);
+  writeFileSync(resolve(repo, "MEMORY.md"), "memory\n", "utf8");
+  git(repo, ["add", "."]);
+  git(repo, ["commit", "-m", "initial"]);
+
+  try {
+    const result = beginChangeTurn(
+      hookInput(
+        "ChatGPT",
+        repo,
+        "memory-session",
+        "memory-turn",
+        "## Memory Writing Agent: Phase 2 (Consolidation)"
+      ),
+      { rootDir: state, codexHome }
+    );
+
+    assert.equal(result.skipped, "internal_memory_agent");
+    assert.equal(
+      existsSync(resolve(state, ".local/change-records/baselines/chatgpt/memory-session-memory-turn.json")),
+      false
+    );
+
+    const nested = resolve(repo, "skills", "writer");
+    mkdirSync(nested, { recursive: true });
+    const nestedResult = beginChangeTurn(
+      hookInput(
+        "ChatGPT",
+        nested,
+        "nested-memory-session",
+        "nested-memory-turn",
+        "## Memory Writing Agent: Phase 2 (Consolidation)"
+      ),
+      { rootDir: state, codexHome }
+    );
+    assert.equal(nestedResult.skipped, "internal_memory_agent");
+
+    const manual = beginChangeTurn(
+      hookInput("ChatGPT", repo, "manual-session", "manual-turn", "manually update memory docs"),
+      { rootDir: state, codexHome }
+    );
+    assert.equal(manual.skipped, undefined);
+    assert.equal(
+      existsSync(resolve(state, ".local/change-records/baselines/chatgpt/manual-session-manual-turn.json")),
+      true
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("memory writer policy supports repo root, prompt priority, environment home and message arrays", () => {
+  const root = mkdtempSync(resolve(tmpdir(), "amber-memory-policy-"));
+  const codexHome = resolve(root, ".codex");
+  const memories = resolve(codexHome, "memories");
+  const marker = "## Memory Writing Agent: Phase 2 (Consolidation)";
+  const previousCodexHome = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = codexHome;
+
+  try {
+    assert.equal(ignoredChangeReason({
+      source: "ChatGPT",
+      cwd: resolve(memories, "skills", "writer"),
+      repoRoot: memories,
+      prompt: marker
+    }), "internal_memory_agent");
+    assert.equal(ignoredChangeReason({
+      source: "ChatGPT",
+      cwd: resolve(root, "temporary-workdir"),
+      repoRoot: resolve(memories, "rollout_summaries"),
+      prompt: marker
+    }), "internal_memory_agent");
+    assert.equal(ignoredChangeReason({
+      source: "ChatGPT",
+      cwd: memories,
+      prompt: marker,
+      input_messages: ["runtime context"]
+    }), "internal_memory_agent");
+    assert.equal(ignoredChangeReason({
+      source: "ChatGPT",
+      cwd: memories,
+      input_messages: ["runtime context", { content: marker }]
+    }), "internal_memory_agent");
+    assert.equal(ignoredChangeReason({
+      source: "ChatGPT",
+      cwd: memories,
+      prompt: "manual update",
+      input_messages: [{ content: marker }]
+    }), null);
+    assert.equal(extractChangePrompt({
+      prompt: "manual update",
+      input_messages: [{ content: marker }]
+    }), "manual update");
+    assert.equal(extractChangePrompt({
+      input_messages: ["runtime context", { content: marker }]
+    }), `runtime context\n${marker}`);
+    assert.equal(ignoredChangeReason({
+      source: "Cursor",
+      cwd: memories,
+      prompt: marker
+    }), null);
+  } finally {
+    if (previousCodexHome === undefined) {
+      delete process.env.CODEX_HOME;
+    } else {
+      process.env.CODEX_HOME = previousCodexHome;
+    }
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("memory writer marker outside Codex memory storage remains collectable", () => {
+  withRepo(({ root, repo, state }) => {
+    const result = beginChangeTurn(
+      hookInput(
+        "ChatGPT",
+        repo,
+        "ordinary-session",
+        "ordinary-turn",
+        "## Memory Writing Agent: test fixture"
+      ),
+      { rootDir: state, codexHome: resolve(root, ".codex") }
+    );
+
+    assert.equal(result.skipped, undefined);
+    assert.equal(result.baseline?.project, "repo");
+  });
+});
+
+test("manual memory edits keep their prompt and are not archived as internal writer", () => {
+  const root = mkdtempSync(resolve(tmpdir(), "amber-memory-manual-archive-"));
+  const codexHome = resolve(root, ".codex");
+  const repo = resolve(codexHome, "memories");
+  const state = resolve(root, "state");
+  const marker = "## Memory Writing Agent: Phase 2 (Consolidation)";
+  mkdirSync(repo, { recursive: true });
+  git(repo, ["init"]);
+  git(repo, ["config", "user.email", "test@example.com"]);
+  git(repo, ["config", "user.name", "Test"]);
+  writeFileSync(resolve(repo, "MEMORY.md"), "memory\n", "utf8");
+  git(repo, ["add", "."]);
+  git(repo, ["commit", "-m", "initial"]);
+
+  try {
+    const result = beginChangeTurn(
+      {
+        ...hookInput("ChatGPT", repo, "manual-session", "manual-turn", "manual update"),
+        input_messages: [{ content: marker }]
+      },
+      { rootDir: state, codexHome }
+    );
+    const baselineFile = resolve(
+      state,
+      ".local/change-records/baselines/chatgpt/manual-session-manual-turn.json"
+    );
+
+    assert.equal(result.skipped, undefined);
+    assert.equal(result.baseline?.prompt, "manual update");
+    assert.equal(existsSync(baselineFile), true);
+
+    const archived = archiveAbortedBaselines({
+      rootDir: state,
+      codexHome,
+      now: Date.now() + DEFAULT_HEALTH_THRESHOLDS.baselineWarnMs
+    });
+    assert.equal(archived.archivedCount, 0);
+    assert.equal(existsSync(baselineFile), true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("a new ChatGPT turn supersedes an unfinished turn in the same session", () => {
