@@ -17,6 +17,7 @@ import {
   ensureOutboxDirs
 } from "./file-outbox.mjs";
 import { extractChangePrompt, ignoredChangeReason } from "./change-record-policy.mjs";
+import { resolveCodexTurnThread } from "./codex-thread.mjs";
 
 export const CHANGE_RECORD_DIR = ".local/change-records";
 export const RETRY_DELAYS_MS = [10_000, 30_000, 120_000, 600_000, 1_800_000, 1_800_000, 1_800_000, 1_800_000];
@@ -53,7 +54,26 @@ export function beginChangeTurn(input, options = {}) {
     return { ok: true, baseline: existing, duplicate: true };
   }
 
-  archiveSupersededBaselines(rootDir, source, identity, repo.root);
+  const thread = source === "ChatGPT"
+    ? resolveCodexTurnThread(
+        {
+          sessionId: identity.sessionId,
+          turnId: identity.turnId,
+          transcriptPath: input.transcript_path || input.transcriptPath
+        },
+        { codexHome: options.codexHome, now: options.now }
+      )
+    : null;
+
+  // A subagent shares the parent's worktree, so the parent turn's tree diff already covers its
+  // edits. Recording it separately would double-count and strand a baseline the parent never closes.
+  if (thread?.threadSource === "subagent") {
+    appendChangeLog(rootDir, `${source} begin skipped: codex_subagent ${identity.key} thread ${thread.threadId}`);
+    return { ok: true, skipped: "codex_subagent" };
+  }
+
+  const threadIdentity = { ...identity, threadId: thread?.threadId || "" };
+  archiveSupersededBaselines(rootDir, source, threadIdentity, repo.root);
 
   const tree = captureWorktreeTree(repo.root);
   const baseline = {
@@ -61,6 +81,7 @@ export function beginChangeTurn(input, options = {}) {
     source,
     sessionId: identity.sessionId,
     turnId: identity.turnId,
+    threadId: threadIdentity.threadId,
     key: identity.key,
     cwd,
     repoRoot: repo.root,
@@ -602,6 +623,17 @@ function findBaselineForCompletion(rootDir, source, identity, cwd) {
   return candidates[0] || null;
 }
 
+// Pre-upgrade baselines have no threadId. Treat that as the main session thread so a later
+// main-thread begin can still replace them. A resolved subagent thread must not match.
+function isSameCollectionThread(baseline, identity) {
+  const baselineThread = String(baseline?.threadId || "");
+  const identityThread = String(identity.threadId || "");
+  if (baselineThread === identityThread) {
+    return true;
+  }
+  return !baselineThread && identityThread === identity.sessionId;
+}
+
 function archiveSupersededBaselines(rootDir, source, identity, repoRoot) {
   const directory = resolve(changeRecordRoot(rootDir), "baselines", source.toLowerCase());
   const identityHash = createHash("sha256").update(identity.key).digest("hex").slice(0, 12);
@@ -613,7 +645,8 @@ function archiveSupersededBaselines(rootDir, source, identity, repoRoot) {
     if (
       baseline?.key === identity.key ||
       baseline?.sessionId !== identity.sessionId ||
-      baseline?.repoRoot !== repoRoot
+      baseline?.repoRoot !== repoRoot ||
+      !isSameCollectionThread(baseline, identity)
     ) {
       continue;
     }

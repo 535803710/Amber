@@ -79,6 +79,8 @@ Cursor 和 Codex/ChatGPT 的用户级 hook 会为每个完成轮次生成工作�
 
 只有工作区实际发生变化时才生成事件，纯问答和分析的轮次不会写入飞书。Cursor 会从 hook 的 `workspace_roots` 识别实际项目目录，Windows 下中文载荷偶发损坏也做了兼容。
 
+Codex 子代理（Bugbot、explore 等）会复用父会话的 `session_id` 触发 `UserPromptSubmit`，但它和父轮次共享同一个工作区，改动本来就落在父轮次的快照区间内。Amber 通过 Codex rollout 里的 `thread_source` 判定子代理并跳过采集，避免双重记账，也避免父轮次的 baseline 被子代理挤掉。
+
 测试记录链路时，可以只改文档，既不影响程序功能，也方便核对飞书里的文件统计。
 
 ### Git 提交记录
@@ -95,7 +97,7 @@ Cursor 和 Codex/ChatGPT 的用户级 hook 会为每个完成轮次生成工作�
 
 AI 修改和 Git 提交各有一套独立的本地 Outbox。队列状态走 `pending → processing → sent/failed` 原子抢占，多个 worker 不会重复投递；失败自动重试，超时卡在 processing 的记录会被恢复，失败队列也可以手动重放。
 
-独立的健康监控跟着 `watch:all` 一起跑，检查 Hook 接入、运行进程、Git 扫描、投递队列和 MCP 调用的超时率、错误率。异常分级、告警去重、恢复提醒，可选监听器挂了会自动重启。内部 Memory Writing Agent 不进入修改采集，已产生的内部残留满 30 分钟会自动归档；真实超时告警会给出项目、轮次和开始时间。其他残留的未完成 baseline 可以在控制台对应异常旁归档，可恢复，不影响已发送的记录。
+独立的健康监控跟着 `watch:all` 一起跑，检查 Hook 接入、运行进程、Git 扫描、投递队列和 MCP 调用的超时率、错误率。异常分级、告警去重、恢复提醒，可选监听器挂了会自动重启。内部 Memory Writing Agent 和 Codex 子代理都不进入修改采集，已产生的内部残留满 30 分钟会自动归档；真实超时告警会给出项目、轮次和开始时间。其他残留的未完成 baseline 可以在控制台对应异常旁归档，可恢复，不影响已发送的记录。
 
 ### 网页控制台
 

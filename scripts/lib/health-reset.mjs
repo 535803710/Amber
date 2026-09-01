@@ -2,6 +2,9 @@ import { existsSync, mkdirSync, readdirSync, renameSync, readFileSync, writeFile
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { ignoredChangeReason } from "./change-record-policy.mjs";
+import { findCodexTurnRollout, readRolloutThreadMeta, resolveCodexHome } from "./codex-thread.mjs";
+
+const TERMINAL_TURN_EVENTS = new Set(["turn_aborted"]);
 
 const SOURCES = Object.freeze(["cursor", "chatgpt"]);
 const DEFAULT_MINIMUM_AGE_MS = 30 * 60_000;
@@ -31,10 +34,9 @@ export function archiveAbortedBaselines({
     const ignoredReason = baseline && oldEnough
       ? ignoredChangeReason(baseline, { codexHome })
       : null;
-    const terminalEvent = baseline && oldEnough && !ignoredReason
-      ? findCodexTerminalEvent(baseline, codexHome)
+    const archiveReason = baseline && oldEnough
+      ? ignoredReason || resolveCodexArchiveReason(baseline, codexHome)
       : null;
-    const archiveReason = ignoredReason || terminalEvent;
     if (
       !baseline ||
       !Number.isFinite(startedAt) ||
@@ -122,44 +124,48 @@ export function archiveStaleBaselines({
   };
 }
 
-function findCodexTerminalEvent(baseline, codexHome) {
+function resolveCodexArchiveReason(baseline, codexHome) {
   const sessionId = String(baseline.sessionId || "");
   const turnId = String(baseline.turnId || "");
   const startedAt = Date.parse(baseline.startedAt || "");
-  if (!/^[A-Za-z0-9-]+$/.test(sessionId) || !turnId || !Number.isFinite(startedAt)) {
+  if (!sessionId || !turnId || !Number.isFinite(startedAt)) {
     return null;
   }
 
-  for (const offset of [-1, 0, 1]) {
-    const date = new Date(startedAt + offset * 24 * 60 * 60_000);
-    const sessionDir = resolve(
-      codexHome,
-      "sessions",
-      String(date.getUTCFullYear()),
-      String(date.getUTCMonth() + 1).padStart(2, "0"),
-      String(date.getUTCDate()).padStart(2, "0")
-    );
-    if (!existsSync(sessionDir)) continue;
-    const fileName = readdirSync(sessionDir).find((name) =>
-      name.endsWith(`-${sessionId}.jsonl`)
-    );
-    if (!fileName) continue;
-    const terminalEvent = readSessionTerminalEvent(resolve(sessionDir, fileName), turnId);
-    if (terminalEvent) {
-      return terminalEvent;
-    }
+  const rollout = findCodexTurnRollout({
+    sessionId,
+    turnId,
+    threadId: baseline.threadId,
+    codexHome: resolveCodexHome(codexHome),
+    startedAt
+  });
+  if (!rollout) {
+    return null;
   }
-  return null;
+
+  // Subagent turns are never reported on their own, so a leftover one can go regardless of how it
+  // ended. A main-thread turn that merely finished still deserves an alert, because a missing
+  // completion there means a real change record was lost.
+  if (readRolloutThreadMeta(rollout)?.threadSource === "subagent") {
+    return "codex_subagent";
+  }
+  return readSessionTerminalEvent(rollout, turnId);
 }
 
 function readSessionTerminalEvent(filePath, turnId) {
-  for (const line of readFileSync(filePath, "utf8").split(/\r?\n/)) {
+  let content;
+  try {
+    content = readFileSync(filePath, "utf8");
+  } catch {
+    return null;
+  }
+  for (const line of content.split(/\r?\n/)) {
     if (!line.includes(turnId)) continue;
     try {
       const event = JSON.parse(line);
       if (
         event?.type === "event_msg" &&
-        event.payload?.type === "turn_aborted" &&
+        TERMINAL_TURN_EVENTS.has(event.payload?.type) &&
         event.payload?.turn_id === turnId
       ) {
         return event.payload.type;
