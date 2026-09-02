@@ -42,7 +42,13 @@ test("团队安装保留现有配置并同时接入 Cursor 和 Codex", () => {
       ""
     ].join("\r\n"));
 
-    const result = installTeamSetup({ sourceRoot: source, targetRoot: target, userHome: home });
+    const nodeExecutable = "C:/Program Files/nodejs/node.exe";
+    const result = installTeamSetup({
+      sourceRoot: source,
+      targetRoot: target,
+      userHome: home,
+      nodeExecutable
+    });
     assert.equal(result.changedFiles.length, 4);
     assert.ok(result.backupDir);
     assert.ok(existsSync(resolve(target, ".env.local")));
@@ -51,9 +57,10 @@ test("团队安装保留现有配置并同时接入 Cursor 和 Codex", () => {
     const cursorHooks = readJson(resolve(home, ".cursor/hooks.json"));
     assert.equal(cursorHooks.hooks.stop[0].command, "node C:/tools/keep-cursor-hook.mjs");
     assert.equal(cursorHooks.hooks.stop.filter((item) => item.command.includes("on-change-event.mjs")).length, 1);
+    assert.match(cursorHooks.hooks.beforeSubmitPrompt[0].command, /^"C:\\Program Files\\nodejs\\node\.exe"/);
     const cursorMcp = readJson(resolve(home, ".cursor/mcp.json"));
     assert.equal(cursorMcp.mcpServers.codegraph.command, "codegraph");
-    assert.equal(cursorMcp.mcpServers.amber.command, "node");
+    assert.equal(cursorMcp.mcpServers.amber.command, "C:\\Program Files\\nodejs\\node.exe");
 
     const codexHooks = readJson(resolve(home, ".codex/hooks.json"));
     assert.equal(codexHooks.hooks.Stop[0].matcher, "keep");
@@ -61,6 +68,7 @@ test("团队安装保留现有配置并同时接入 Cursor 和 Codex", () => {
     const codexToml = readFileSync(resolve(home, ".codex/config.toml"), "utf8");
     assert.match(codexToml, /\[mcp_servers\.keep\]/);
     assert.match(codexToml, /\[mcp_servers\.amber\]/);
+    assert.match(codexToml, /command = "C:\\\\Program Files\\\\nodejs\\\\node\.exe"/);
     assert.deepEqual(inspectTeamSetup({ targetRoot: target, userHome: home }), {
       runtime: true,
       envLocal: true,
@@ -70,7 +78,12 @@ test("团队安装保留现有配置并同时接入 Cursor 和 Codex", () => {
       codexMcp: true
     });
 
-    const rerun = installTeamSetup({ sourceRoot: source, targetRoot: target, userHome: home });
+    const rerun = installTeamSetup({
+      sourceRoot: source,
+      targetRoot: target,
+      userHome: home,
+      nodeExecutable
+    });
     assert.deepEqual(rerun.changedFiles, []);
   } finally {
     rmSync(root.base, { recursive: true, force: true });
@@ -196,9 +209,13 @@ test("卸载系统计划在自启动脚本缺失时仍清理 AMBER_HOME", () => 
 test("Windows 入口使用对应 Shell 的安全路径语法", () => {
   const repositoryRoot = resolve(import.meta.dirname, "..");
   const amberBatch = readFileSync(resolve(repositoryRoot, "amber.bat"), "utf8");
+  const installBatch = readFileSync(resolve(repositoryRoot, "install.bat"), "utf8");
   const uninstallBatch = readFileSync(resolve(repositoryRoot, "uninstall.bat"), "utf8");
   const askRule = readFileSync(resolve(repositoryRoot, ".cursor/rules/amber-askquestion.mdc"), "utf8");
   assert.match(amberBatch, /--target "%ROOT%\."/);
+  assert.match(amberBatch, /scripts\\resolve-node\.ps1/);
+  assert.match(installBatch, /scripts\\resolve-node\.ps1/);
+  assert.match(uninstallBatch, /scripts\\resolve-node\.ps1/);
   assert.match(uninstallBatch, /uninstall --target "%~dp0\."/);
   assert.match(askRule, /node "\$env:AMBER_HOME\/scripts\/notify-ask\.mjs"/);
   assert.doesNotMatch(askRule, /%AMBER_HOME%/);
@@ -243,12 +260,34 @@ test("团队安装 CLI 可以在隔离用户目录完成安装、诊断和卸载
     assert.equal(install.status, 0, install.stderr || install.stdout);
     const doctor = spawnSync(process.execPath, [script, "doctor", ...common], { encoding: "utf8" });
     assert.equal(doctor.status, 0, doctor.stderr || doctor.stdout);
+    const jsonDoctor = spawnSync(process.execPath, [script, "doctor", ...common, "--json"], { encoding: "utf8" });
+    assert.equal(jsonDoctor.status, 0, jsonDoctor.stderr || jsonDoctor.stdout);
+    const report = JSON.parse(jsonDoctor.stdout);
+    assert.equal(report.schemaVersion, 1);
+    assert.equal(report.profile, "core");
+    assert.equal(report.status, "warn");
+    assert.equal(report.checks.some((item) => item.id === "node_runtime" && item.status === "pass"), true);
+    assert.doesNotMatch(jsonDoctor.stdout, /FEISHU_CHANGE_WEBHOOK_TOKEN/);
+    assert.doesNotMatch(jsonDoctor.stdout, new RegExp(base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"));
     const uninstall = spawnSync(process.execPath, [script, "uninstall", ...common], { encoding: "utf8" });
     assert.equal(uninstall.status, 0, uninstall.stderr || uninstall.stdout);
     assert.ok(existsSync(resolve(target, ".env.local")));
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
+});
+
+test("Windows Node resolver can use the current machine runtime", { skip: process.platform !== "win32" }, () => {
+  const resolver = resolve(import.meta.dirname, "../scripts/resolve-node.ps1");
+  const result = spawnSync("powershell.exe", [
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    resolver
+  ], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout.trim(), /node\.exe$/i);
 });
 
 function fixture() {

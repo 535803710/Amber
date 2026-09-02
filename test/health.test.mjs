@@ -251,6 +251,30 @@ test("health reports an optional watcher that exhausted automatic restarts", () 
   assert.equal(health.issues.some((issue) => issue.id === "runtime_optional_watcher_failed"), true);
 });
 
+test("health exposes the core profile without optional watcher alerts", () => {
+  const root = mkdtempSync(resolve(tmpdir(), "amber-health-core-profile-"));
+  const local = resolve(root, ".local");
+  mkdirSync(local, { recursive: true });
+  writeFileSync(resolve(local, "watch-all.pid"), `${process.pid}\n`, "utf8");
+  writeFileSync(resolve(local, "runtime-desired.json"), JSON.stringify({
+    running: true,
+    profile: "core"
+  }), "utf8");
+  writeFileSync(resolve(local, "watcher-state.json"), JSON.stringify({
+    runtimePid: process.pid,
+    profile: "core",
+    optionalWatchers: {
+      toast: { status: "disabled" },
+      ui: { status: "disabled" }
+    }
+  }), "utf8");
+
+  const snapshot = collectHealthSnapshot({ rootDir: root, now: NOW });
+  const health = evaluateHealth(snapshot, { now: NOW });
+  assert.equal(snapshot.runtime.profile, "core");
+  assert.equal(health.issues.some((issue) => issue.id.startsWith("runtime_optional_watcher_")), false);
+});
+
 test("health thresholds accept environment overrides without accepting invalid values", () => {
   const thresholds = resolveHealthThresholds({
     AMBER_HEALTH_BASELINE_WARN_MS: "1234",

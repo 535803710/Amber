@@ -13,6 +13,7 @@ import {
   writeFileSync
 } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -68,6 +69,10 @@ export function resolveArtifactPath(sourceRoot, version) {
   return resolve(sourceRoot, "dist", `Amber-team-v${version}.zip`);
 }
 
+export function resolveManifestPath(sourceRoot, version) {
+  return resolve(sourceRoot, "dist", `Amber-team-v${version}.manifest.json`);
+}
+
 export function runBuild({ sourceRoot = SOURCE_ROOT } = {}) {
   const root = resolve(sourceRoot);
   assertWindows();
@@ -78,6 +83,7 @@ export function runBuild({ sourceRoot = SOURCE_ROOT } = {}) {
   const outputDirectory = resolve(root, "dist");
   mkdirSync(outputDirectory, { recursive: true });
   const artifactPath = resolveArtifactPath(root, version);
+  const manifestPath = resolveManifestPath(root, version);
   const temporaryArtifactPath = resolve(outputDirectory, `.Amber-team-v${version}.tmp.zip`);
   const stagingRoot = mkdtempSync(resolve(tmpdir(), "amber-team-build-"));
   const packageRoot = resolve(stagingRoot, PACKAGE_ROOT_NAME);
@@ -89,16 +95,42 @@ export function runBuild({ sourceRoot = SOURCE_ROOT } = {}) {
     verifyArchive(temporaryArtifactPath);
     rmSync(artifactPath, { force: true });
     renameSync(temporaryArtifactPath, artifactPath);
+    const manifest = createArtifactManifest(root, artifactPath, version);
+    writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
     return {
       artifactPath,
+      manifestPath,
       entryCount: entries.length,
       size: lstatSync(artifactPath).size,
-      version
+      version,
+      ...manifest
     };
   } finally {
     rmSync(temporaryArtifactPath, { force: true });
     rmSync(stagingRoot, { recursive: true, force: true });
   }
+}
+
+function createArtifactManifest(sourceRoot, artifactPath, version) {
+  const commit = runGit(sourceRoot, ["rev-parse", "HEAD"]) || "unknown";
+  const dirty = Boolean(runGit(sourceRoot, ["status", "--porcelain"]));
+  const sha256 = createHash("sha256").update(readFileSync(artifactPath)).digest("hex");
+  return {
+    schemaVersion: 1,
+    version,
+    commit,
+    dirty,
+    sha256,
+    builtAt: new Date().toISOString()
+  };
+}
+
+function runGit(sourceRoot, args) {
+  const result = spawnSync("git", ["-C", sourceRoot, ...args], {
+    encoding: "utf8",
+    windowsHide: true
+  });
+  return result.status === 0 ? String(result.stdout || "").trim() : "";
 }
 
 function collectDirectoryEntries(directory, relativeDirectory) {
@@ -229,6 +261,8 @@ if (resolve(process.argv[1] || "") === resolve(fileURLToPath(import.meta.url))) 
   try {
     const result = runBuild();
     console.log(`Amber 团队安装包已生成：${result.artifactPath}`);
+    console.log(`构建清单：${result.manifestPath}`);
+    console.log(`SHA-256：${result.sha256}`);
     console.log(`包含 ${result.entryCount} 个文件，大小 ${result.size} 字节。`);
   } catch (error) {
     console.error(`Amber 团队安装包构建失败：${error.message}`);

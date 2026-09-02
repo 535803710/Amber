@@ -1,6 +1,6 @@
 {
   "name": "amber",
-  "version": "1.3.0",
+  "version": "1.4.0-mvp.1",
   "private": true,
   "type": "module",
   "engines": {
@@ -16,7 +16,8 @@
     "check:status": "node scripts/check-status.mjs",
     "watch:notifications": "node scripts/watch-notifications.mjs",
     "watch:ui-prompts": "node scripts/watch-ui-prompts.mjs",
-    "watch:all": "node scripts/start-watch-stack.mjs",
+    "watch:all": "node scripts/start-watch-stack.mjs --profile full",
+    "watch:core": "node scripts/start-watch-stack.mjs --profile core",
     "health:status": "node scripts/health-monitor-worker.mjs --status",
     "health:once": "node scripts/health-monitor-worker.mjs --once",
     "records:worker": "node scripts/change-record-worker.mjs",

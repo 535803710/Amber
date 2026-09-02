@@ -9,7 +9,7 @@ import {
   writeFileSync
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, resolve } from "node:path";
+import { basename, delimiter, dirname, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import {
   claimReadyOutboxItems,
@@ -75,7 +75,7 @@ export function beginChangeTurn(input, options = {}) {
   const threadIdentity = { ...identity, threadId: thread?.threadId || "" };
   archiveSupersededBaselines(rootDir, source, threadIdentity, repo.root);
 
-  const tree = captureWorktreeTree(repo.root);
+  const tree = captureWorktreeTree(repo.root, { rootDir });
   const baseline = {
     schemaVersion: 1,
     source,
@@ -141,13 +141,13 @@ export function completeChangeTurn(input, options = {}) {
       return { ok: true, skipped: "repository_unavailable" };
     }
 
-    const resultTree = captureWorktreeTree(repo.root);
+    const resultTree = captureWorktreeTree(repo.root, { rootDir });
     if (resultTree === baseline.baselineTree) {
       appendChangeLog(rootDir, `${source} complete ${identity.key}: no changes`);
       return { ok: true, skipped: "no_changes" };
     }
 
-    const diff = summarizeTreeDiff(repo.root, baseline.baselineTree, resultTree);
+    const diff = summarizeTreeDiff(repo.root, baseline.baselineTree, resultTree, { rootDir });
     if (diff.changedFiles.length === 0) {
       return { ok: true, skipped: "no_changes" };
     }
@@ -401,13 +401,16 @@ export function inspectRepository(cwd) {
   return { root, branch, headCommit };
 }
 
-export function captureWorktreeTree(repoRoot) {
+export function captureWorktreeTree(repoRoot, options = {}) {
   const token = createHash("sha256")
     .update(`${repoRoot}\0${process.pid}\0${Date.now()}\0${Math.random()}`)
     .digest("hex")
     .slice(0, 16);
   const indexPath = resolve(tmpdir(), `amber-index-${token}`);
-  const env = { ...process.env, GIT_INDEX_FILE: indexPath };
+  const env = {
+    ...snapshotGitEnvironment(repoRoot, options),
+    GIT_INDEX_FILE: indexPath
+  };
 
   try {
     const head = runGit(repoRoot, ["rev-parse", "--verify", "HEAD"], { allowFailure: true });
@@ -420,7 +423,8 @@ export function captureWorktreeTree(repoRoot) {
   }
 }
 
-export function summarizeTreeDiff(repoRoot, baselineTree, resultTree) {
+export function summarizeTreeDiff(repoRoot, baselineTree, resultTree, options = {}) {
+  const env = snapshotGitEnvironment(repoRoot, options);
   const nameStatus = runGit(repoRoot, [
     "-c",
     "core.quotepath=false",
@@ -430,7 +434,7 @@ export function summarizeTreeDiff(repoRoot, baselineTree, resultTree) {
     baselineTree,
     resultTree,
     "--"
-  ]).stdout;
+  ], { env }).stdout;
   const changedFiles = nameStatus
     .split(/\r?\n/)
     .filter(Boolean)
@@ -445,7 +449,7 @@ export function summarizeTreeDiff(repoRoot, baselineTree, resultTree) {
     baselineTree,
     resultTree,
     "--"
-  ]).stdout;
+  ], { env }).stdout;
   let additions = 0;
   let deletions = 0;
   for (const line of numstat.split(/\r?\n/)) {
@@ -458,6 +462,27 @@ export function summarizeTreeDiff(repoRoot, baselineTree, resultTree) {
   }
 
   return { changedFiles, additions, deletions };
+}
+
+function snapshotGitEnvironment(repoRoot, options = {}) {
+  const rootDir = resolve(options.rootDir || process.cwd());
+  const repoKey = createHash("sha256")
+    .update(resolve(repoRoot))
+    .digest("hex")
+    .slice(0, 16);
+  const objectDir = resolve(changeRecordRoot(rootDir), "git-objects", repoKey);
+  const repositoryObjectDir = runGit(
+    repoRoot,
+    ["rev-parse", "--path-format=absolute", "--git-path", "objects"]
+  ).stdout.trim();
+  const inheritedAlternates = String(process.env.GIT_ALTERNATE_OBJECT_DIRECTORIES || "").trim();
+  const alternates = [repositoryObjectDir, inheritedAlternates].filter(Boolean).join(delimiter);
+  mkdirSync(objectDir, { recursive: true });
+  return {
+    ...process.env,
+    GIT_OBJECT_DIRECTORY: objectDir,
+    GIT_ALTERNATE_OBJECT_DIRECTORIES: alternates
+  };
 }
 
 function parseNameStatusLine(line) {

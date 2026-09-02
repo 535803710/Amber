@@ -20,6 +20,12 @@ test("Windows background startup uses the PowerShell process launcher", () => {
     "-File"
   ]);
   assert.match(launch.args[4], /start-watch-background\.ps1$/i);
+  assert.deepEqual(launch.args.slice(-2), ["-Profile", "core"]);
+});
+
+test("Windows background startup forwards the full runtime profile", () => {
+  const launch = resolveWatcherStartCommand("win32", "full");
+  assert.deepEqual(launch.args.slice(-2), ["-Profile", "full"]);
 });
 
 test("watcher startup fails when the launcher exits without starting services", async () => {

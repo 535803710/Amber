@@ -71,8 +71,10 @@ start "" "%URL%"
 goto after_action
 
 :action_start
-echo Starting watch:all in background...
-powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\start-watch-background.ps1"
+set "RUNTIME_PROFILE=core"
+if /i "%~2"=="--full" set "RUNTIME_PROFILE=full"
+echo Starting Amber %RUNTIME_PROFILE% runtime in background...
+powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\start-watch-background.ps1" -Profile "%RUNTIME_PROFILE%"
 goto after_action
 
 :action_stop
@@ -108,19 +110,21 @@ echo Last task status:
 goto after_action
 
 :action_doctor
-"%NODE_EXE%" "scripts\team-setup.mjs" doctor --target "%ROOT%."
+"%NODE_EXE%" "scripts\team-setup.mjs" doctor --target "%ROOT%." %2 %3 %4 %5 %6 %7 %8 %9
 goto after_action
 
 :help
 echo Usage:
 echo   amber.bat
 echo   amber.bat open       Open dashboard and browser config
-echo   amber.bat start      Start watch:all in background
+echo   amber.bat start      Start core collection in background
+echo   amber.bat start --full  Include Windows toast and UI prompt listeners
 echo   amber.bat stop       Stop watch:all
 echo   amber.bat test       Send a test notification
 echo   amber.bat edit       Edit .env.local
 echo   amber.bat status     Print dashboard, watcher and last status
 echo   amber.bat doctor     Check team integrations and Feishu access
+echo   amber.bat doctor --json  Print a redacted diagnostic report
 echo.
 echo Env:
 echo   AMBER_DASHBOARD_PORT Override dashboard port, default 3847
@@ -134,16 +138,9 @@ pause
 goto menu
 
 :find_node
-for /f "delims=" %%I in ('where node 2^>nul') do (
-  if not defined NODE_EXE set "NODE_EXE=%%I"
-)
-if not defined NODE_EXE if exist "%ProgramFiles%\nodejs\node.exe" set "NODE_EXE=%ProgramFiles%\nodejs\node.exe"
-if not defined NODE_EXE if exist "%ProgramFiles(x86)%\nodejs\node.exe" set "NODE_EXE=%ProgramFiles(x86)%\nodejs\node.exe"
-if not defined NODE_EXE if exist "%LocalAppData%\Programs\nodejs\node.exe" set "NODE_EXE=%LocalAppData%\Programs\nodejs\node.exe"
-if not defined NODE_EXE if exist "%USERPROFILE%\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe" set "NODE_EXE=%USERPROFILE%\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe"
+for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\resolve-node.ps1" 2^>nul`) do if not defined NODE_EXE set "NODE_EXE=%%I"
 if not defined NODE_EXE (
-  echo Node.js was not found in PATH.
-  echo Install Node.js or open this bat from an environment where node is available.
+  echo Node.js 22 or later was not found in PATH, standard install locations, or Codex Runtime.
   exit /b 1
 )
 exit /b 0

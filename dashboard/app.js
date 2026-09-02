@@ -775,7 +775,7 @@ function renderHealth(health) {
 function healthDetail(key, details) {
   if (key === "runtime") {
     const watcher = details.running ? `watch pid ${details.pid || "-"}` : t("stopped");
-    return `${watcher} · health ${details.healthRunning ? t("healthOn") : t("healthOff")}`;
+    return `${details.profile || "full"} · ${watcher} · health ${details.healthRunning ? t("healthOn") : t("healthOff")}`;
   }
   if (key === "cursor" || key === "chatgpt") {
     return `${details.activeBaselines || 0} baseline · ${formatTime(details.lastCompleteAt || details.lastBeginAt)}`;

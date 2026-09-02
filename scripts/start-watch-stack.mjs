@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSyn
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
+import { resolveRuntimeProfile } from "./lib/runtime-profile.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const WATCH_ALL = resolve(ROOT, "scripts/watch-all.mjs");
@@ -18,10 +19,11 @@ main();
 
 function main() {
   const background = process.argv.includes("--background");
+  const profile = resolveRuntimeProfile(process.argv.slice(2), "core");
   if (background && process.platform === "win32") {
     const launcher = spawn(
       "powershell.exe",
-      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", WINDOWS_BACKGROUND_SCRIPT],
+      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", WINDOWS_BACKGROUND_SCRIPT, "-Profile", profile],
       { cwd: ROOT, detached: true, stdio: "ignore", windowsHide: true }
     );
     launcher.unref();
@@ -29,12 +31,12 @@ function main() {
     return;
   }
 
-  writeRuntimeDesired(true);
+  writeRuntimeDesired(true, profile);
   mkdirSync(LOCAL_DIR, { recursive: true });
 
   if (background) {
     if (!isPidAlive(WATCH_PID)) {
-      startDetached("watch-all", WATCH_ALL, resolve(LOCAL_DIR, "watch-all.log"));
+      startDetached("watch-all", WATCH_ALL, resolve(LOCAL_DIR, "watch-all.log"), ["--profile", profile]);
     }
     if (!isPidAlive(HEALTH_PID)) {
       startDetached("health-monitor", HEALTH_MONITOR, resolve(LOCAL_DIR, "health-monitor.log"));
@@ -44,7 +46,7 @@ function main() {
   }
 
   const health = startDetached("health-monitor", HEALTH_MONITOR, resolve(LOCAL_DIR, "health-monitor.log"));
-  const watcher = spawn(process.execPath, [WATCH_ALL], {
+  const watcher = spawn(process.execPath, [WATCH_ALL, "--profile", profile], {
     cwd: ROOT,
     stdio: "inherit",
     windowsHide: true
@@ -55,7 +57,7 @@ function main() {
   const stop = () => {
     if (stopping) return;
     stopping = true;
-    writeRuntimeDesired(false);
+    writeRuntimeDesired(false, profile);
     watcher.kill();
     health.kill();
     removePid();
@@ -82,10 +84,10 @@ function main() {
   });
 }
 
-function startDetached(label, script, logFile) {
+function startDetached(label, script, logFile, args = []) {
   mkdirSync(dirname(logFile), { recursive: true });
   const fd = openSync(logFile, "a");
-  const child = spawn(process.execPath, [script], {
+  const child = spawn(process.execPath, [script, ...args], {
     cwd: ROOT,
     detached: true,
     stdio: ["ignore", fd, fd],
@@ -108,13 +110,14 @@ function isPidAlive(filePath) {
   }
 }
 
-function writeRuntimeDesired(running) {
+function writeRuntimeDesired(running, profile = "core") {
   mkdirSync(LOCAL_DIR, { recursive: true });
   const current = readJson(DESIRED_FILE) || {};
   const temp = `${DESIRED_FILE}.${process.pid}.${Date.now()}.tmp`;
-  writeFileSync(temp, `${JSON.stringify({ ...current, running, changedAt: new Date().toISOString(), consecutiveMisses: 0 }, null, 2)}\n`, "utf8");
+  writeFileSync(temp, `${JSON.stringify({ ...current, running, profile, changedAt: new Date().toISOString(), consecutiveMisses: 0 }, null, 2)}\n`, "utf8");
   renameSync(temp, DESIRED_FILE);
 }
+
 
 function readJson(filePath) {
   try {

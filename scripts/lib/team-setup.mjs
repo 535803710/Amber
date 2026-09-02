@@ -25,7 +25,13 @@ export const TEAM_RUNTIME_FILES = [
 export const TEAM_RUNTIME_DIRECTORIES = ["dashboard", "docs", "scripts"];
 const AMBER_HOOK_PATTERN = /[\\/]scripts[\\/]hooks[\\/](?:on-change-event|on-cursor-event|on-codex-event)\.mjs\b/i;
 
-export function installTeamSetup({ sourceRoot, targetRoot, userHome, now = new Date() }) {
+export function installTeamSetup({
+  sourceRoot,
+  targetRoot,
+  userHome,
+  nodeExecutable = process.execPath,
+  now = new Date()
+}) {
   const source = resolve(sourceRoot);
   const target = resolve(targetRoot);
   const home = resolve(userHome);
@@ -33,7 +39,7 @@ export function installTeamSetup({ sourceRoot, targetRoot, userHome, now = new D
   ensureEnvLocal(target);
 
   const paths = setupPaths(home);
-  const changes = prepareInstallChanges(paths, target);
+  const changes = prepareInstallChanges(paths, target, nodeExecutable);
   const backupDir = backupChangedFiles(changes, target, now);
   writeChanges(changes);
   return {
@@ -83,11 +89,11 @@ export function inspectTeamSetup({ targetRoot, userHome }) {
   };
 }
 
-export function mergeCursorHooks(input = {}, amberRoot) {
+export function mergeCursorHooks(input = {}, amberRoot, nodeExecutable = "node") {
   const document = cloneObject(input);
   document.version = document.version || 1;
   document.hooks = objectValue(document.hooks);
-  const commands = cursorHookCommands(amberRoot);
+  const commands = cursorHookCommands(amberRoot, nodeExecutable);
   for (const [event, desired] of Object.entries(commands)) {
     const current = Array.isArray(document.hooks[event]) ? document.hooks[event] : [];
     const preserved = current.filter((item) => !isAmberHook(item));
@@ -108,10 +114,10 @@ export function removeCursorHooks(input = {}) {
   return document;
 }
 
-export function mergeCodexHooks(input = {}, amberRoot) {
+export function mergeCodexHooks(input = {}, amberRoot, nodeExecutable = "node") {
   const document = cloneObject(input);
   document.hooks = objectValue(document.hooks);
-  const commands = codexHookCommands(amberRoot);
+  const commands = codexHookCommands(amberRoot, nodeExecutable);
   for (const [event, desired] of Object.entries(commands)) {
     const groups = Array.isArray(document.hooks[event]) ? document.hooks[event] : [];
     const preserved = groups.map(removeAmberHooksFromGroup).filter(Boolean);
@@ -132,11 +138,11 @@ export function removeCodexHooks(input = {}) {
   return document;
 }
 
-export function mergeMcpJson(input = {}, amberRoot) {
+export function mergeMcpJson(input = {}, amberRoot, nodeExecutable = "node") {
   const document = cloneObject(input);
   document.mcpServers = objectValue(document.mcpServers);
   document.mcpServers.amber = {
-    command: "node",
+    command: resolveNodeCommand(nodeExecutable),
     args: [slashPath(resolve(amberRoot, "scripts/mcp-stdio-server.mjs"))]
   };
   return document;
@@ -149,11 +155,11 @@ export function removeMcpJson(input = {}) {
   return document;
 }
 
-export function mergeCodexToml(input = "", amberRoot) {
+export function mergeCodexToml(input = "", amberRoot, nodeExecutable = "node") {
   const script = slashPath(resolve(amberRoot, "scripts/mcp-stdio-server.mjs"));
   const section = [
     "[mcp_servers.amber]",
-    "command = \"node\"",
+    `command = \"${escapeToml(resolveNodeCommand(nodeExecutable))}\"`,
     `args = [\"${escapeToml(script)}\"]`
   ];
   return replaceTomlSection(input, "mcp_servers.amber", section);
@@ -163,16 +169,16 @@ export function removeCodexToml(input = "") {
   return replaceTomlSection(input, "mcp_servers.amber", null);
 }
 
-function prepareInstallChanges(paths, targetRoot) {
+function prepareInstallChanges(paths, targetRoot, nodeExecutable) {
   const cursorHooks = readJsonIfPresent(paths.cursorHooks);
   const cursorMcp = readJsonIfPresent(paths.cursorMcp);
   const codexHooks = readJsonIfPresent(paths.codexHooks);
   const codexToml = readTextIfPresent(paths.codexToml);
   return [
-    jsonChange(paths.cursorHooks, cursorHooks, mergeCursorHooks(cursorHooks, targetRoot)),
-    jsonChange(paths.cursorMcp, cursorMcp, mergeMcpJson(cursorMcp, targetRoot)),
-    jsonChange(paths.codexHooks, codexHooks, mergeCodexHooks(codexHooks, targetRoot)),
-    textChange(paths.codexToml, codexToml, mergeCodexToml(codexToml, targetRoot))
+    jsonChange(paths.cursorHooks, cursorHooks, mergeCursorHooks(cursorHooks, targetRoot, nodeExecutable)),
+    jsonChange(paths.cursorMcp, cursorMcp, mergeMcpJson(cursorMcp, targetRoot, nodeExecutable)),
+    jsonChange(paths.codexHooks, codexHooks, mergeCodexHooks(codexHooks, targetRoot, nodeExecutable)),
+    textChange(paths.codexToml, codexToml, mergeCodexToml(codexToml, targetRoot, nodeExecutable))
   ];
 }
 
@@ -295,27 +301,44 @@ function readTextIfPresent(path) {
   return existsSync(path) ? readFileSync(path, "utf8") : "";
 }
 
-function cursorHookCommands(amberRoot) {
+function cursorHookCommands(amberRoot, nodeExecutable) {
   const change = quotedCommand(amberRoot, "on-change-event.mjs");
   const prompt = quotedCommand(amberRoot, "on-cursor-event.mjs");
+  const node = quoteShellToken(resolveNodeCommand(nodeExecutable));
   return {
-    beforeSubmitPrompt: [`node ${change} --source Cursor`],
-    afterAgentResponse: [`node ${prompt}`, `node ${change} --source Cursor`],
-    stop: [`node ${prompt}`, `node ${change} --source Cursor`]
+    beforeSubmitPrompt: [`${node} ${change} --source Cursor`],
+    afterAgentResponse: [`${node} ${prompt}`, `${node} ${change} --source Cursor`],
+    stop: [`${node} ${prompt}`, `${node} ${change} --source Cursor`]
   };
 }
 
-function codexHookCommands(amberRoot) {
+function codexHookCommands(amberRoot, nodeExecutable) {
   const change = quotedCommand(amberRoot, "on-change-event.mjs");
   const prompt = quotedCommand(amberRoot, "on-codex-event.mjs");
+  const node = quoteShellToken(resolveNodeCommand(nodeExecutable));
   return {
-    UserPromptSubmit: [{ type: "command", command: `node ${change} --source ChatGPT`, timeout: 30 }],
+    UserPromptSubmit: [{ type: "command", command: `${node} ${change} --source ChatGPT`, timeout: 30 }],
     Stop: [
-      { type: "command", command: `node ${prompt} --event Stop` },
-      { type: "command", command: `node ${change} --source ChatGPT`, timeout: 30 }
+      { type: "command", command: `${node} ${prompt} --event Stop` },
+      { type: "command", command: `${node} ${change} --source ChatGPT`, timeout: 30 }
     ],
-    PermissionRequest: [{ type: "command", command: `node ${prompt} --event PermissionRequest` }]
+    PermissionRequest: [{ type: "command", command: `${node} ${prompt} --event PermissionRequest` }]
   };
+}
+
+function resolveNodeCommand(value) {
+  const command = String(value || "node").trim();
+  return command ? resolveExecutablePath(command) : "node";
+}
+
+function resolveExecutablePath(command) {
+  return /[\\/]/.test(command) ? resolve(command) : command;
+}
+
+function quoteShellToken(value) {
+  return /\s/.test(value) || /[\\/]/.test(value)
+    ? `"${value.replace(/"/g, '\\"')}"`
+    : value;
 }
 
 function quotedCommand(amberRoot, file) {

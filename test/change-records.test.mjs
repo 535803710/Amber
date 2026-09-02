@@ -570,6 +570,28 @@ test("pre-existing dirty files are excluded from the turn", () => {
   });
 });
 
+test("worktree snapshots keep generated Git objects outside repository metadata", () => {
+  withRepo(({ repo, state }) => {
+    const objectsBefore = looseObjectCount(repo);
+    beginChangeTurn(hookInput("ChatGPT", repo, "sandbox-session", "sandbox-turn"), {
+      rootDir: state
+    });
+    writeFileSync(resolve(repo, "sandbox-change.txt"), "sandbox-safe\n", "utf8");
+
+    const done = completeChangeTurn(
+      hookInput("ChatGPT", repo, "sandbox-session", "sandbox-turn"),
+      { rootDir: state }
+    );
+
+    assert.equal(done.queued, true);
+    assert.equal(looseObjectCount(repo), objectsBefore);
+    assert.equal(
+      readdirSync(resolve(state, ".local/change-records/git-objects")).length,
+      1
+    );
+  });
+});
+
 test("duplicate begin for the same turn preserves the original baseline", () => {
   withRepo(({ repo, state }) => {
     const input = hookInput("ChatGPT", repo, "same-session", "same-turn", "change task");
@@ -1015,6 +1037,14 @@ function git(cwd, args) {
     windowsHide: true
   });
   assert.equal(result.status, 0, result.stderr);
+  return result.stdout;
+}
+
+function looseObjectCount(repo) {
+  const line = git(repo, ["count-objects", "-v"])
+    .split(/\r?\n/)
+    .find((item) => item.startsWith("count: "));
+  return Number(line?.slice("count: ".length) || 0);
 }
 
 function hookInput(source, cwd, sessionId, turnId, prompt = "") {

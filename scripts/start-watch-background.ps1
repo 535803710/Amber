@@ -1,4 +1,9 @@
 # Start Amber watch stack in background; logs to .local/watch-all.log and .local/health-monitor.log
+param(
+    [ValidateSet("core", "full")]
+    [string]$Profile = "core"
+)
+
 $ErrorActionPreference = "Stop"
 
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
@@ -13,6 +18,7 @@ $HealthPidFile = Join-Path $LogDir "health-monitor.pid"
 $DesiredFile = Join-Path $LogDir "runtime-desired.json"
 $WatchScript = Join-Path $Root "scripts\watch-all.mjs"
 $HealthScript = Join-Path $Root "scripts\health-monitor-worker.mjs"
+$NodeResolver = Join-Path $Root "scripts\resolve-node.ps1"
 
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
@@ -25,6 +31,7 @@ function Write-Log([string]$Message) {
 function Write-RuntimeDesired {
     $json = [ordered]@{
         running = $true
+        profile = $Profile
         changedAt = (Get-Date).ToUniversalTime().ToString("o")
         consecutiveMisses = 0
     } | ConvertTo-Json
@@ -41,18 +48,36 @@ function Test-LiveNodePid([string]$PidPath) {
 
 $watchRunning = Test-LiveNodePid $PidFile
 $healthRunning = Test-LiveNodePid $HealthPidFile
+$currentProfile = $null
+if (Test-Path $DesiredFile) {
+    try {
+        $currentProfile = (Get-Content -Raw -Encoding UTF8 $DesiredFile | ConvertFrom-Json).profile
+    } catch {
+        $currentProfile = $null
+    }
+}
+if ($watchRunning -and -not $currentProfile) {
+    $currentProfile = "full"
+}
+if ($watchRunning -and $currentProfile -and $currentProfile -ne $Profile) {
+    $existingPid = [int](Get-Content -Path $PidFile -ErrorAction SilentlyContinue)
+    taskkill /PID $existingPid /T /F | Out-Null
+    Remove-Item -LiteralPath $PidFile -Force -ErrorAction SilentlyContinue
+    $watchRunning = $false
+    Write-Log "switching runtime profile from $currentProfile to $Profile"
+}
 if ($watchRunning -and $healthRunning) {
-    Write-Log "already running watch and health monitor"
+    Write-Log "already running watch and health monitor profile=$Profile"
     exit 0
 }
 
-$node = (Get-Command node -ErrorAction Stop).Source
+$node = (& $NodeResolver | Select-Object -First 1).Trim()
 
 if (-not $watchRunning) {
     Write-Log "starting watch:all root=$Root"
     $watchProcess = Start-Process `
         -FilePath $node `
-        -ArgumentList @($WatchScript) `
+        -ArgumentList @($WatchScript, "--profile", $Profile) `
         -WorkingDirectory $Root `
         -WindowStyle Hidden `
         -RedirectStandardOutput $LogFile `
@@ -77,4 +102,4 @@ if (-not $healthRunning) {
     Write-Log "started health monitor pid=$($healthProcess.Id)"
 }
 
-Write-Host "Amber watch stack started"
+Write-Host "Amber $Profile runtime started"

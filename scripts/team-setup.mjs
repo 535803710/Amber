@@ -14,6 +14,7 @@ import {
 } from "./lib/team-setup.mjs";
 import { resolveLarkCliInvocation } from "./lib/task-context/lark-source.mjs";
 import { resolveTaskContextSource } from "./lib/task-context/constants.mjs";
+import { getWatcherStatus } from "./lib/watcher-control.mjs";
 
 const SOURCE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DEFAULT_TARGET = resolve(process.env.LOCALAPPDATA || SOURCE_ROOT, "Amber");
@@ -36,8 +37,8 @@ async function main() {
     return;
   }
   if (args.command === "doctor") {
-    const ok = doctor(args, { live: !args.skipLive });
-    if (!ok) process.exitCode = 1;
+    const report = doctor(args, { live: !args.skipLive });
+    if (report.status === "fail") process.exitCode = 1;
     return;
   }
   printHelp();
@@ -56,10 +57,10 @@ async function install(args) {
   }
   console.log(`Amber 已安装到：${result.targetRoot}`);
   if (result.backupDir) console.log(`IDE 配置备份：${result.backupDir}`);
-  const ok = doctor(args, { live: !args.skipLive });
+  const report = doctor(args, { live: !args.skipLive });
   console.log("下一步：在本地控制台填写 AI/Git Webhook，并保存实际 Git 扫描目录。");
   if (!args.skipOpen) openDashboard(args.target);
-  if (!ok) process.exitCode = 1;
+  if (report.status === "fail") process.exitCode = 1;
 }
 
 function uninstall(args) {
@@ -78,30 +79,75 @@ function uninstall(args) {
 
 function doctor(args, { live }) {
   const snapshot = inspectTeamSetup({ targetRoot: args.target, userHome: args.userHome });
+  const env = { ...process.env, ...readEnvFile(resolve(args.target, ".env.local")) };
+  const watcher = getWatcherStatus(args.target);
+  const desired = readJsonFile(resolve(args.target, ".local/runtime-desired.json"));
   const checks = [
-    check("运行文件", snapshot.runtime),
-    check("本地配置", snapshot.envLocal),
-    check("Cursor Hook", snapshot.cursorHooks),
-    check("Cursor MCP", snapshot.cursorMcp),
-    check("Codex Hook", snapshot.codexHooks),
-    check("Codex MCP", snapshot.codexMcp)
+    check("node_runtime", "Node.js", true, `${nodeSource(process.execPath)} · ${process.version}`),
+    check("runtime_files", "运行文件", snapshot.runtime),
+    check("local_config", "本地配置", snapshot.envLocal),
+    check("cursor_hooks", "Cursor Hook", snapshot.cursorHooks),
+    check("cursor_mcp", "Cursor MCP", snapshot.cursorMcp),
+    check("codex_hooks", "Codex Hook", snapshot.codexHooks),
+    check("codex_mcp", "Codex MCP", snapshot.codexMcp),
+    optionalCheck("ai_webhook", "AI 记录 Webhook", Boolean(env.FEISHU_CHANGE_WEBHOOK_URL?.trim())),
+    optionalCheck("git_webhook", "Git 记录 Webhook", Boolean(env.FEISHU_COMMIT_WEBHOOK_URL?.trim())),
+    optionalCheck("git_scan_roots", "Git 扫描目录", Boolean(env.COMMIT_RECORD_SCAN_ROOTS?.trim())),
+    optionalCheck(
+      "autostart",
+      "开机自启动",
+      existsSync(resolve(args.target, ".local/autostart-method.txt")) || args.skipSystem
+    ),
+    optionalCheck(
+      "runtime_processes",
+      "核心常驻进程",
+      watcher.running && watcher.healthRunning,
+      watcher.running && watcher.healthRunning ? "watcher 与 health monitor 正常" : "尚未全部运行"
+    )
   ];
   if (live) checks.push(...larkChecks(args.target));
-  for (const item of checks) console.log(`${item.ok ? "[OK]" : "[FAIL]"} ${item.label}${item.detail ? `：${item.detail}` : ""}`);
-  return checks.every((item) => item.ok);
+  const status = checks.some((item) => item.status === "fail")
+    ? "fail"
+    : checks.some((item) => item.status === "warn") ? "warn" : "pass";
+  const reportChecks = args.json
+    ? checks.map((item) => ({
+        ...item,
+        detail: redactDiagnosticPaths(item.detail, args)
+      }))
+    : checks;
+  const report = {
+    schemaVersion: 1,
+    version: readPackageVersion(args.target),
+    checkedAt: new Date().toISOString(),
+    profile: desired?.profile === "full" ? "full" : "core",
+    status,
+    checks: reportChecks
+  };
+  if (args.json) {
+    console.log(JSON.stringify(report, null, 2));
+    return report;
+  }
+  for (const item of checks) {
+    const marker = item.status === "pass" ? "OK" : item.status === "warn" ? "WARN" : "FAIL";
+    console.log(`[${marker}] ${item.label}${item.detail ? `：${item.detail}` : ""}`);
+  }
+  return report;
 }
 
 function larkChecks(targetRoot) {
   const env = { ...process.env, ...readEnvFile(resolve(targetRoot, ".env.local")) };
   const source = resolveTaskContextSource(env);
   const auth = runLark(["auth", "status", "--json", "--verify"], env);
-  if (!auth.ok) return [check("飞书登录", false, auth.message)];
+  if (!auth.ok) return [check("lark_auth", "飞书登录", false, auth.message)];
   const authJson = parseJsonOutput(auth.stdout);
   const verified = authJson?.verified === true || authJson?.data?.verified === true || authJson?.ok === true;
-  const checks = [check("飞书登录", verified, verified ? "用户身份有效" : "登录状态未通过验证")];
-  for (const [label, tableId] of [["AI 记录表", source.aiTableId], ["Git 记录表", source.commitTableId]]) {
+  const checks = [check("lark_auth", "飞书登录", verified, verified ? "用户身份有效" : "登录状态未通过验证")];
+  for (const [id, label, tableId] of [
+    ["ai_table", "AI 记录表", source.aiTableId],
+    ["git_table", "Git 记录表", source.commitTableId]
+  ]) {
     if (!source.baseToken || !tableId) {
-      checks.push(check(label, false, "Base 配置缺失"));
+      checks.push(check(id, label, false, "Base 配置缺失"));
       continue;
     }
     const probe = runLark([
@@ -112,7 +158,7 @@ function larkChecks(targetRoot) {
       "--as", "user",
       "--format", "json"
     ], env);
-    checks.push(check(label, probe.ok, probe.ok ? "可读取" : probe.message));
+    checks.push(check(id, label, probe.ok, probe.ok ? "可读取" : probe.message));
   }
   return checks;
 }
@@ -206,7 +252,8 @@ function parseArgs(argv) {
     userHome: resolve(value("--user-home", homedir())),
     skipLive: argv.includes("--skip-live"),
     skipOpen: argv.includes("--skip-open"),
-    skipSystem: argv.includes("--skip-system")
+    skipSystem: argv.includes("--skip-system"),
+    json: argv.includes("--json")
   };
 }
 
@@ -219,8 +266,55 @@ function assertNodeVersion() {
   if (major < 22) throw new Error(`需要 Node.js 22 或更高版本，当前为 ${process.version}。`);
 }
 
-function check(label, ok, detail = "") {
-  return { label, ok: Boolean(ok), detail };
+function check(id, label, ok, detail = "") {
+  return { id, label, status: ok ? "pass" : "fail", detail };
+}
+
+function optionalCheck(id, label, ok, detail = "") {
+  return { id, label, status: ok ? "pass" : "warn", detail };
+}
+
+function readJsonFile(path) {
+  try {
+    return JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function readPackageVersion(targetRoot) {
+  try {
+    return JSON.parse(readFileSync(resolve(targetRoot, "package.json"), "utf8")).version || "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+function nodeSource(path) {
+  const normalized = String(path || "").replaceAll("\\", "/").toLowerCase();
+  if (normalized.includes("/.cache/codex-runtimes/")) return "Codex Runtime";
+  if (normalized.includes("/program files/") || normalized.includes("/program files (x86)/")) return "标准安装";
+  if (normalized.includes("/appdata/local/programs/nodejs/")) return "用户安装";
+  return "当前 Node";
+}
+
+function redactDiagnosticPaths(value, args) {
+  let detail = String(value || "");
+  for (const [path, replacement] of [
+    [args.userHome, "<user-home>"],
+    [args.target, "<amber-root>"]
+  ]) {
+    const normalized = String(path || "");
+    if (!normalized) continue;
+    for (const variant of new Set([normalized, normalized.replaceAll("\\", "/")])) {
+      detail = detail.replace(new RegExp(escapeRegExp(variant), "gi"), replacement);
+    }
+  }
+  return detail;
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function sanitize(value) {
@@ -244,5 +338,6 @@ Amber 团队安装
   --skip-live         跳过飞书登录和 Base 权限检查
   --skip-open         安装后不打开本地控制台
   --skip-system       跳过用户环境变量和开机自启动
+  --json              doctor 输出脱敏 JSON 报告
 `);
 }

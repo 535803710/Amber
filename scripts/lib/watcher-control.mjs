@@ -60,7 +60,10 @@ async function startWatcherOnce(rootDir, options) {
 
   const { logFile } = getWatcherPaths(rootDir);
   mkdirSync(dirname(logFile), { recursive: true });
-  const { command, args } = resolveWatcherStartCommand(options.platform || process.platform);
+  const { command, args } = resolveWatcherStartCommand(
+    options.platform || process.platform,
+    options.profile || "core"
+  );
   appendLog(logFile, "starting stack launcher");
 
   let launcher;
@@ -118,13 +121,16 @@ function runLauncher(command, args, { rootDir, spawnProcess }) {
   };
 }
 
-export function resolveWatcherStartCommand(platform = process.platform) {
+export function resolveWatcherStartCommand(platform = process.platform, profile = "core") {
+  if (profile !== "core" && profile !== "full") {
+    throw new Error("profile 只接受 core 或 full");
+  }
   return platform === "win32"
     ? {
         command: "powershell.exe",
-        args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", WINDOWS_BACKGROUND_SCRIPT]
+        args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", WINDOWS_BACKGROUND_SCRIPT, "-Profile", profile]
       }
-    : { command: process.execPath, args: [STACK_SCRIPT, "--background"] };
+    : { command: process.execPath, args: [STACK_SCRIPT, "--background", "--profile", profile] };
 }
 
 export async function waitForWatcherStart({

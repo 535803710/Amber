@@ -550,6 +550,7 @@ function collectRuntimeHealth(rootDir) {
     pid: running ? pid : null,
     healthRunning,
     healthPid: healthRunning ? healthPid : null,
+    profile: watcherState?.profile || desired?.profile || "full",
     optionalWatchers,
     desiredChangedAt: desired?.changedAt || null,
     consecutiveMisses: running ? 0 : Number(desired?.consecutiveMisses || 0)

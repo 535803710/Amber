@@ -5,7 +5,7 @@
 
 Amber 采集 AI 修改和 Git 提交这两类研发事实，可靠投递后沉淀成飞书多维表格里可查询的研发证据。下次 IDE Agent 接手一个老模块时，可以通过 Amber MCP 查回这个工作区经历过什么，从证据出发恢复研发现场。
 
-当前状态：采集链路与健康监控已经稳定，MCP 证据服务 v2 正在真实任务中验证。完整路线见 [琥珀计划](docs/琥珀计划.md)，方向依据见 [产品方向讨论结论（2026-08-06）](docs/产品方向讨论结论-2026-08-06.md)。
+当前状态：采集链路与健康监控已经稳定，MCP 证据服务 v2 正在真实任务中验证。部门推广入口以 [部门推广方案](docs/部门推广方案调研与一期建设/【琥珀计划】部门推广方案调研与一期建设.md) 为准：Skill + npx，不是 ZIP。完整路线见 [琥珀计划](docs/琥珀计划.md)，方向依据见 [产品方向讨论结论（2026-08-06）](docs/产品方向讨论结论-2026-08-06.md)。
 
 ## 省流（TL;DR）
 
@@ -13,7 +13,8 @@ Amber 采集 AI 修改和 Git 提交这两类研发事实，可靠投递后沉�
 
 ```powershell
 copy .env.example .env.local   # 填记录 Webhook 和 Git 扫描目录
-npm run watch:all              # AI 修改记录、Git 提交记录、健康监控全套启动
+npm run watch:core             # AI 修改、Git 提交和健康监控核心启动
+npm run watch:all              # 额外包含 Windows 通知和 UI 提示监听
 npm run dashboard              # 网页控制台：看队列、采集健康和记录
 ```
 
@@ -85,7 +86,7 @@ Codex 子代理（Bugbot、explore 等）会复用父会话的 `session_id` 触�
 
 ### Git 提交记录
 
-`watch:all` 会同时跑一个 Git 提交记录 worker，只读扫描 `COMMIT_RECORD_SCAN_ROOTS` 配置目录下的 Git 仓库和本地分支。多个绝对路径用分号分隔，例如 `COMMIT_RECORD_SCAN_ROOTS=D:/project;E:/work`，未配置时不扫描。
+`watch:core` 和 `watch:all` 都会运行 Git 提交记录 worker，只读扫描 `COMMIT_RECORD_SCAN_ROOTS` 配置目录下的 Git 仓库和本地分支。多个绝对路径用分号分隔，例如 `COMMIT_RECORD_SCAN_ROOTS=D:/project;E:/work`，未配置时不扫描。
 
 采集分三层：refs 文件事件驱动（默认防抖 750ms、最长等待 5s）、每 60 秒遍历配置目录发现新增/移除仓库、每 1 小时全量兜底补偿 watcher 漏报。不修改项目 Git Hook，零仓库入侵。调整间隔见 `.env.example` 中 `COMMIT_RECORD_RECONCILE_INTERVAL_MS` / `COMMIT_RECORD_DISCOVERY_INTERVAL_MS` / `COMMIT_RECORD_WATCH_DEBOUNCE_MS` / `COMMIT_RECORD_WATCH_MAX_WAIT_MS`。
 
@@ -97,7 +98,7 @@ Codex 子代理（Bugbot、explore 等）会复用父会话的 `session_id` 触�
 
 AI 修改和 Git 提交各有一套独立的本地 Outbox。队列状态走 `pending → processing → sent/failed` 原子抢占，多个 worker 不会重复投递；失败自动重试，超时卡在 processing 的记录会被恢复，失败队列也可以手动重放。
 
-独立的健康监控跟着 `watch:all` 一起跑，检查 Hook 接入、运行进程、Git 扫描、投递队列和 MCP 调用的超时率、错误率。异常分级、告警去重、恢复提醒，可选监听器挂了会自动重启。内部 Memory Writing Agent 和 Codex 子代理都不进入修改采集，已产生的内部残留满 30 分钟会自动归档；真实超时告警会给出项目、轮次和开始时间。其他残留的未完成 baseline 可以在控制台对应异常旁归档，可恢复，不影响已发送的记录。
+独立的健康监控跟着 core/full 运行档位一起启动，检查 Hook 接入、运行进程、Git 扫描、投递队列和 MCP 调用的超时率、错误率。异常分级、告警去重、恢复提醒，full 档位下的可选监听器挂了会自动重启。内部 Memory Writing Agent 和 Codex 子代理都不进入修改采集，已产生的内部残留满 30 分钟会自动归档；真实超时告警会给出项目、轮次和开始时间。其他残留的未完成 baseline 可以在控制台对应异常旁归档，可恢复，不影响已发送的记录。
 
 ### 网页控制台
 
@@ -124,36 +125,15 @@ Webhook、Token 和 Git 扫描目录也在控制台里配置，凭据只写本�
 
 ## 怎么用
 
-### 团队一键安装（Windows）
+### 部门接入（一期目标）
 
-适合已有 Node.js 22+、lark-cli 登录和当前飞书 Base 读取权限的团队成员：
+部门用户入口是 **一条 npx 安装命令，重启 Cursor/Codex 后用自然语言完成接入、检查、修复和更新**。Skill 负责理解意图并调用安装器；本地 Runtime 与 Dashboard 继续跑采集和状态。方案与验收见 [部门推广方案](docs/部门推广方案调研与一期建设/【琥珀计划】部门推广方案调研与一期建设.md)。
 
-1. 解压 Amber 安装包后双击 `install.bat`；
-2. 安装器复制运行文件到 `%LOCALAPPDATA%\Amber`，备份并合并 Cursor/Codex 的 Hook 与 MCP 配置，同时启用开机自启动；
-3. 安装完成后会自动打开本地控制台，填写 AI 修改记录、Git 提交记录的 Webhook，保存实际 Git 扫描目录；
-4. Reload Cursor、重启 Codex 或新建任务，让客户端加载新的 Hook 和 MCP 配置。
+Skill 与 npx 安装器尚未落地，正式包名未发布。在此之前不要把 ZIP / `install.bat` 发给部门同事当推广入口。
 
-安装过程不会覆盖其他 Hook、MCP 配置、`.env.local` 或 `.local` 队列。Webhook 与 Token 只写入成员本机，不放入安装包。
+### 当前本机怎么跑（源码）
 
-```powershell
-amber.bat doctor   # 复查 IDE 接入、飞书登录和两张 Base 表的读取权限
-```
-
-双击 `uninstall.bat` 会移除 Amber 接入和自启动，本地配置、队列与卸载前备份继续保留。升级就是重新解压新版本再双击 `install.bat`。
-
-详细步骤与故障处理见 [团队安装说明](docs/团队安装说明.md)。
-
-维护者生成安装包，在仓库根目录运行：
-
-```powershell
-npm run build
-```
-
-命令会使用当前工作区的最新文件，未提交改动也会进入安装包；测试通过后生成 `dist/Amber-team-v<package.json 版本>.zip`。
-
-### 手动配置
-
-不走团队安装包的话：
+开发或本机验证继续用仓库源码，不要把 ZIP 当部门入口。现有 Windows `team-setup` / `install.bat` 和 `npm run build` 仍可用，用途见 [团队安装说明](docs/团队安装说明.md)。
 
 ```powershell
 copy .env.example .env.local
@@ -175,7 +155,8 @@ copy .env.example .env.local
 习惯终端的话，日常这几条就够：
 
 ```powershell
-npm run watch:all     # 开采集：AI 修改记录 + Git 提交记录 + 健康监控
+npm run watch:core    # 开核心采集：AI 修改记录 + Git 提交记录 + 健康监控
+npm run watch:all     # 在核心采集上增加 Windows 通知和 UI 提示监听
 npm run health:status # 看一次采集健康快照（只检查，不告警）
 ```
 
@@ -216,7 +197,7 @@ Cursor 项目配置：
 }
 ```
 
-Codex 在 `config.toml` 里用同一个 stdio 命令配置。团队安装器会自动生成实际安装目录对应的配置。
+Codex 在 `config.toml` 里用同一个 stdio 命令配置。当前 Windows `team-setup` 会按安装目录写入 Hook/MCP；部门入口改为 npx 后，仍应复用同一套合并逻辑。
 
 输入必须包含 `workspace_root`（绝对路径）和 `task`，可选 `files`、`limit`、`detail`。共享 Base 可以用 `.env.local` 的 `AMBER_BASE_TOKEN`、`AMBER_AI_TABLE_ID`、`AMBER_COMMIT_TABLE_ID` 覆盖，未配置时继续使用默认双表。
 
@@ -259,10 +240,11 @@ Amber 默认采集研发元数据，完整源码和完整 diff 留在仓库之�
 
 近期重点：
 
-1. 在真实研发任务中验证 MCP v2 的 Top 3 证据是否足够且相关；
-2. 验证「IDE Agent + 当前代码/Git/测试 + MCP 历史」的恢复方式；
-3. 记录历史证据实际节省时间、避免遗漏或减少返工的案例；
-4. ROI 得到证明前，机会池里的重型能力先按兵不动。
+1. 按部门推广方案建设 Skill + npx 安装器，Windows 先打通固定目录接入；
+2. 在真实研发任务中验证 MCP v2 的 Top 3 证据是否足够且相关；
+3. 验证「IDE Agent + 当前代码/Git/测试 + MCP 历史」的恢复方式；
+4. 记录历史证据实际节省时间、避免遗漏或减少返工的案例；
+5. ROI 得到证明前，机会池里的重型能力先按兵不动。
 
 机会池（暂不承诺）：完整的 AI 变更验收和 Review 流程、主动遗留雷达、团队知识地图、发布风险与故障反查、自动提炼 Skill、研发全生命周期流程编排。这些能力只有在出现稳定、重复且代价明确的真实问题，并且收益能盖过维护成本时，才会选择性建设。
 
@@ -273,7 +255,9 @@ Amber 默认采集研发元数据，完整源码和完整 diff 留在仓库之�
 | 风险 | 当前应对 |
 | --- | --- |
 | ChatGPT 会话工作区失效：项目目录改名后，旧会话仍绑定旧 cwd | 改名后重新打开 Amber 工作区并新建会话 |
-| Codex/ChatGPT 桌面端 hook 是否执行取决于客户端加载和授权状态 | 增加真实新增、修改、删除的回归验收和状态提示 |
+| Codex 沙箱拒绝执行 `C:\Program Files\nodejs\node.exe`，Hook 进程起不来 | 安装器需按环境分别验证 Cursor/Codex 可用的 Node；Codex Runtime 中的 Node 可通过 `codex sandbox` 探测 |
+| 临时 Git 索引仍向仓库 `.git/objects` 写快照对象，Codex Hook 创建 baseline 失败 | 快照对象写入 Amber `.local/change-records/git-objects`，仓库对象库仅作为只读 alternate |
+| Hook 定义和信任哈希晚于任务创建，旧任务可能继续使用原 Hook 快照 | 信任当前哈希后创建全新任务验收；这是 Codex Desktop 0.152.0 的本机观察，升级后复测 |
 | Cursor 中文回复恢复依赖本地 UTF-8 hook 日志 | Cursor 升级后跑中文回归测试，保留降级标记 |
 | 多个 Agent 并发修改同一仓库时归因可能不精确 | 标记 `concurrent_risk`，后续增强关联策略 |
 | 提交扫描只覆盖 `COMMIT_RECORD_SCAN_ROOTS` 配置的目录 | 在控制台或 `.env.local` 明确配置实际项目目录 |
