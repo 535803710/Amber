@@ -119,6 +119,20 @@ MCP 不负责独立生成决定、风险或最终研发结论。Codex 应结合�
 
 紧急回退可在启动 MCP 前设置 `AMBER_TASK_CONTEXT_ADAPTIVE_HISTORY=0`，关闭历史演变题的自动升级；默认值为 `1`。该开关只影响检索密度，不改变调用门控、缓存或仓库隔离。
 
+## 4. AI 修改 Hook 未触发排查
+
+2026-09-02 的源码模式故障中，Codex Hook 的 Node 命令在 MVP 实施和回退期间被多次修改。命令变化使已有信任状态失效；重新信任当前 `%USERPROFILE%\.codex\hooks.json` 后，下一轮 `UserPromptSubmit` 成功建立基线，`Stop` 随后生成并投递修改记录。恢复后的命令仍为 MVP 前的 `node "<Amber>\scripts\hooks\on-change-event.mjs"`，因此本次自动触发恢复的直接条件是重新信任。
+
+排查时分开确认三层：
+
+1. **Codex 调度层**：修改 Hook 配置后重新信任，并新发起一轮真实文件修改；仅重启 Amber watcher 不会让未获信任的 Hook 开始执行。
+2. **Hook 采集层**：检查 `.local/change-records/hook-health.ndjson`。提交用户消息后应出现 `begin`，任务结束后应出现 `complete`；缺少 `begin` 表示 Hook 尚未由 Codex 调度。
+3. **投递层**：运行 `node scripts/change-record-worker.mjs --status`，确认 `pending`、`processing`、`failed` 均为 `0`，并检查 `lastSuccessAt`。
+
+手动执行 `on-change-event.mjs` 只能验证采集脚本和投递链路，不能证明 Codex 自动调度已经恢复。若重新信任后仍无 `begin`，再重启 Codex 或新建任务，并检查客户端版本与 Hook 加载状态。
+
+同次回退还暴露了一个独立问题：LF 换行会让 Windows `cmd.exe` 无法稳定定位 `amber.bat` 标签。仓库使用 `.gitattributes` 将 `*.bat` 固定为 CRLF；该问题不影响 Codex 是否调度 Hook，但会影响 `amber.bat start/status`。
+
 ## 手动记录状态
 
 仍可直接用命令记录状态：
