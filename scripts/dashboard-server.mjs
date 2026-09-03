@@ -136,7 +136,7 @@ async function handleApi(req, res, pathname, url) {
   }
 
   if (pathname === "/api/commit-record-settings" && req.method === "GET") {
-    sendJson(res, 200, getCommitRecordStatus({ rootDir: ROOT_DIR }));
+    sendJson(res, 200, readCommitRecordConfig());
     return;
   }
 
@@ -326,7 +326,7 @@ async function buildState() {
       webhookMasked: maskWebhookUrl(process.env.FEISHU_CHANGE_WEBHOOK_URL?.trim() || ""),
       baseUrl: "https://transsioner.feishu.cn/base/Inmhb4Vl0alBIAsvzaxcxC0Ln0d"
     },
-    commitRecords: getCommitRecordStatus({ rootDir: ROOT_DIR }),
+    commitRecords: readCommitRecordConfig(),
     health,
     autostart,
     logTail: readLogTail(ROOT_DIR, 30)
@@ -352,38 +352,61 @@ function saveChangeRecordSettings(body) {
 }
 
 function saveCommitRecordSettings(body) {
-  if (!body || body.scanRoots === undefined) {
-    throw createHttpError(400, "请提供 Git 提交扫描目录。");
+  const webhookUrl = normalizeOptionalString(body?.webhookUrl);
+  const webhookToken = normalizeOptionalString(body?.webhookToken);
+  const clearWebhook = body?.clearWebhook === true;
+  const clearToken = body?.clearToken === true;
+
+  if (webhookUrl && !isHttpUrl(webhookUrl)) {
+    throw createHttpError(400, "Git 提交记录 Webhook 必须是 http 或 https 地址。");
   }
 
-  const roots = [];
-  const seen = new Set();
-  for (const value of parseScanRoots(body.scanRoots)) {
-    if (!isAbsolute(value)) {
-      throw createHttpError(400, `扫描目录必须是绝对路径：${value}`);
+  let scanRoots;
+  if (body?.scanRoots !== undefined) {
+    const roots = [];
+    const seen = new Set();
+    for (const value of parseScanRoots(body.scanRoots)) {
+      if (!isAbsolute(value)) {
+        throw createHttpError(400, `扫描目录必须是绝对路径：${value}`);
+      }
+      const root = resolve(value);
+      let directory = false;
+      try {
+        directory = existsSync(root) && statSync(root).isDirectory();
+      } catch {
+        directory = false;
+      }
+      if (!directory) {
+        throw createHttpError(400, `扫描目录必须是已存在的目录：${root}`);
+      }
+      const key = process.platform === "win32" ? root.toLowerCase() : root;
+      if (!seen.has(key)) {
+        seen.add(key);
+        roots.push(root);
+      }
     }
-    const root = resolve(value);
-    let directory = false;
-    try {
-      directory = existsSync(root) && statSync(root).isDirectory();
-    } catch {
-      directory = false;
-    }
-    if (!directory) {
-      throw createHttpError(400, `扫描目录必须是已存在的目录：${root}`);
-    }
-    const key = process.platform === "win32" ? root.toLowerCase() : root;
-    if (!seen.has(key)) {
-      seen.add(key);
-      roots.push(root);
-    }
+    scanRoots = roots.length ? roots.map((root) => root.replaceAll("\\", "/")).join(";") : null;
   }
 
   writeEnvLocalValues({
-    COMMIT_RECORD_SCAN_ROOTS: roots.length ? roots.map((root) => root.replaceAll("\\", "/")).join(";") : null
+    FEISHU_COMMIT_WEBHOOK_URL: clearWebhook ? null : webhookUrl,
+    FEISHU_COMMIT_WEBHOOK_TOKEN: clearToken ? null : webhookToken,
+    COMMIT_RECORD_SCAN_ROOTS: scanRoots
   });
-  reloadEnvKeys(["COMMIT_RECORD_SCAN_ROOTS"]);
-  return getCommitRecordStatus({ rootDir: ROOT_DIR });
+  reloadEnvKeys([
+    "FEISHU_COMMIT_WEBHOOK_URL",
+    "FEISHU_COMMIT_WEBHOOK_TOKEN",
+    "COMMIT_RECORD_SCAN_ROOTS"
+  ]);
+  return readCommitRecordConfig();
+}
+
+function readCommitRecordConfig() {
+  return {
+    ...getCommitRecordStatus({ rootDir: ROOT_DIR }),
+    tokenConfigured: Boolean(process.env.FEISHU_COMMIT_WEBHOOK_TOKEN?.trim()),
+    webhookMasked: maskWebhookUrl(process.env.FEISHU_COMMIT_WEBHOOK_URL?.trim() || "")
+  };
 }
 
 async function chooseFolder() {

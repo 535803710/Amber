@@ -15,11 +15,16 @@ import {
   toWebhookPayload,
   writeWorkerState
 } from "./lib/change-records.mjs";
+import { readRuntimeConfig } from "./lib/runtime-config.mjs";
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = resolve(SCRIPT_DIR, "..");
 const POLL_INTERVAL_MS = 2_000;
 const REQUEST_TIMEOUT_MS = 8_000;
+const CHANGE_RECORD_ENV_KEYS = [
+  "FEISHU_CHANGE_WEBHOOK_URL",
+  "FEISHU_CHANGE_WEBHOOK_TOKEN",
+];
 
 if (resolve(process.argv[1] || "") === fileURLToPath(import.meta.url)) {
   main().catch((error) => {
@@ -63,10 +68,14 @@ async function main() {
 export async function processReadyItems({
   dryRun = false,
   rootDir = ROOT_DIR,
-  webhookUrl = process.env.FEISHU_CHANGE_WEBHOOK_URL?.trim() || "",
-  webhookToken = process.env.FEISHU_CHANGE_WEBHOOK_TOKEN?.trim() || "",
+  webhookUrl,
+  webhookToken,
   requestTimeoutMs = REQUEST_TIMEOUT_MS
 } = {}) {
+  const config = readRuntimeConfig({ rootDir, keys: CHANGE_RECORD_ENV_KEYS });
+  webhookUrl = webhookUrl ?? config.FEISHU_CHANGE_WEBHOOK_URL?.trim() ?? "";
+  webhookToken = webhookToken ?? config.FEISHU_CHANGE_WEBHOOK_TOKEN?.trim() ?? "";
+
   if (!dryRun) {
     writeWorkerState({ lastHeartbeatAt: new Date().toISOString() }, { rootDir });
   }

@@ -4,6 +4,15 @@ setlocal EnableExtensions
 chcp 65001 >nul 2>nul
 
 set "ROOT=%~dp0"
+if not defined AMBER_HOME goto root_ready
+if not exist "%AMBER_HOME%\amber.bat" goto root_ready
+for %%I in ("%ROOT%.") do set "CURRENT_ROOT=%%~fI"
+for %%I in ("%AMBER_HOME%\.") do set "INSTALLED_ROOT=%%~fI"
+if /i "%CURRENT_ROOT%"=="%INSTALLED_ROOT%" goto root_ready
+call "%INSTALLED_ROOT%\amber.bat" %*
+exit /b %ERRORLEVEL%
+
+:root_ready
 set "PORT=%AMBER_DASHBOARD_PORT%"
 if "%PORT%"=="" set "PORT=3847"
 set "URL=http://127.0.0.1:%PORT%"
@@ -27,7 +36,7 @@ cls
 echo.
 echo  Amber control
 echo  ----------------------------------------
-echo  [1] Open browser dashboard
+echo  [1] Open dashboard / configure Amber
 echo  [2] Start background watch:all
 echo  [3] Stop background watch:all
 echo  [4] Send test notification
@@ -116,7 +125,8 @@ goto after_action
 :help
 echo Usage:
 echo   amber.bat
-echo   amber.bat open       Open dashboard and browser config
+echo   amber.bat open       Open dashboard
+echo   amber.bat config     Open Dashboard configuration
 echo   amber.bat start      Start core collection in background
 echo   amber.bat start --full  Include Windows toast and UI prompt listeners
 echo   amber.bat stop       Stop watch:all

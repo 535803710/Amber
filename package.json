@@ -1,6 +1,6 @@
 {
   "name": "amber",
-  "version": "1.4.0-mvp.1",
+  "version": "1.4.0-mvp.2",
   "private": true,
   "type": "module",
   "engines": {

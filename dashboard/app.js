@@ -65,18 +65,21 @@ const els = {
   recordsMsg: document.getElementById("recordsMsg"),
   commitRecordsBadge: document.getElementById("commitRecordsBadge"),
   commitRepositoryCount: document.getElementById("commitRepositoryCount"),
-  commitRecordsPending: document.getElementById("commitRecordsPending"),
   commitRecordsFailed: document.getElementById("commitRecordsFailed"),
-  commitLastScan: document.getElementById("commitLastScan"),
-  commitWatchStatus: document.getElementById("commitWatchStatus"),
-  commitWatchCount: document.getElementById("commitWatchCount"),
-  commitWatchLastEvent: document.getElementById("commitWatchLastEvent"),
+  commitWebhookUrl: document.getElementById("commitWebhookUrl"),
+  commitWebhookToken: document.getElementById("commitWebhookToken"),
+  commitWebhookMeta: document.getElementById("commitWebhookMeta"),
+  commitTokenMeta: document.getElementById("commitTokenMeta"),
+  clearCommitWebhook: document.getElementById("clearCommitWebhook"),
+  clearCommitToken: document.getElementById("clearCommitToken"),
+  clearCommitWebhookLabel: document.getElementById("clearCommitWebhookLabel"),
+  clearCommitTokenLabel: document.getElementById("clearCommitTokenLabel"),
   commitScanRoots: document.getElementById("commitScanRoots"),
   commitScanRootsLabel: document.getElementById("commitScanRootsLabel"),
   commitScanRootsHint: document.getElementById("commitScanRootsHint"),
   commitScanRootsMeta: document.getElementById("commitScanRootsMeta"),
   chooseCommitScanRootBtn: document.getElementById("chooseCommitScanRootBtn"),
-  saveCommitScanRootsBtn: document.getElementById("saveCommitScanRootsBtn"),
+  saveCommitRecordSettingsBtn: document.getElementById("saveCommitRecordSettingsBtn"),
   commitScanRootsMsg: document.getElementById("commitScanRootsMsg"),
   replayCommitRecordsBtn: document.getElementById("replayCommitRecordsBtn"),
   healthTitle: document.getElementById("healthTitle"),
@@ -235,18 +238,22 @@ const I18N = {
     healthUnknown: "unknown",
     healthOn: "on",
     healthOff: "off",
+    commitRecordsConfigured: "configured",
+    commitRecordsUnconfigured: "webhook or scan roots missing",
+    commitClearWebhook: "clear webhook",
+    commitClearToken: "clear token",
+    commitTokenSet: "token: set",
+    commitTokenUnset: "token: unset",
     commitScanRootsLabel: "scan roots (one absolute path per line)",
-    commitScanRootsHint: "Git commits are discovered from configured roots; project hooks are not modified.",
+    commitScanRootsHint: "Git commits are sent after the webhook and scan roots are configured; project hooks are not modified.",
     commitScanRootsPlaceholder: "D:/project",
     commitScanRootsCurrent: (value) => `current: ${value}`,
     commitScanRootsUnset: "current: unset",
-    commitScanRootsSave: "save scan roots",
-    commitScanRootsSaved: "Git scan roots saved",
+    commitSettingsSave: "save Git config",
+    commitSettingsSaved: "Git record config saved",
     chooseCommitScanRoot: "choose folder",
     chooseCommitScanRootBusy: "opening...",
     chooseCommitScanRootAdded: "folder added; save to apply",
-    commitScanRootsConfigured: "configured",
-    commitScanRootsUnconfigured: "scan not configured",
     requestFailed: (status) => `Request failed (${status})`
   },
   zh: {
@@ -380,18 +387,22 @@ const I18N = {
     healthUnknown: "未知",
     healthOn: "已运行",
     healthOff: "未运行",
+    commitRecordsConfigured: "已配置",
+    commitRecordsUnconfigured: "缺少 Webhook 或扫描目录",
+    commitClearWebhook: "清空 webhook",
+    commitClearToken: "清空 token",
+    commitTokenSet: "token：已配置",
+    commitTokenUnset: "token：未配置",
     commitScanRootsLabel: "扫描目录（每行一个绝对路径）",
-    commitScanRootsHint: "配置目录后自动发现 Git 提交；不修改项目 Hook。",
+    commitScanRootsHint: "配置 Webhook 和扫描目录后自动发送 Git 提交；不修改项目 Hook。",
     commitScanRootsPlaceholder: "D:/project",
     commitScanRootsCurrent: (value) => `当前：${value}`,
     commitScanRootsUnset: "当前：未配置",
-    commitScanRootsSave: "保存扫描范围",
-    commitScanRootsSaved: "Git 扫描范围已保存",
+    commitSettingsSave: "保存 Git 配置",
+    commitSettingsSaved: "Git 提交记录配置已保存",
     chooseCommitScanRoot: "选择文件夹",
     chooseCommitScanRootBusy: "打开中...",
     chooseCommitScanRootAdded: "目录已添加，请保存后生效",
-    commitScanRootsConfigured: "已配置",
-    commitScanRootsUnconfigured: "待配置",
     requestFailed: (status) => `请求失败 (${status})`
   }
 };
@@ -508,10 +519,14 @@ function applyLanguage(language, { persist = false } = {}) {
   setText(els.saveRecordsBtn, "recordsSave");
   setText(els.replayRecordsBtn, "recordsRetry");
   setText(els.openBaseLink, "recordsOpen");
+  setText(els.clearCommitWebhookLabel, "commitClearWebhook");
+  setText(els.clearCommitTokenLabel, "commitClearToken");
   setText(els.commitScanRootsLabel, "commitScanRootsLabel");
   setText(els.commitScanRootsHint, "commitScanRootsHint");
   setText(els.chooseCommitScanRootBtn, "chooseCommitScanRoot");
-  setText(els.saveCommitScanRootsBtn, "commitScanRootsSave");
+  setText(els.saveCommitRecordSettingsBtn, "commitSettingsSave");
+  els.commitWebhookUrl.placeholder = t("webhookPlaceholder");
+  els.commitWebhookToken.placeholder = t("secretPlaceholder");
   els.commitScanRoots.placeholder = t("commitScanRootsPlaceholder");
   setText(els.rulesHint, "rulesHint");
   setText(els.waitRuleTitle, "waitRuleTitle");
@@ -674,17 +689,17 @@ function renderChangeRecords(records) {
 }
 
 function renderCommitRecords(records) {
-  const configured = Boolean(records.scanConfigured);
-  els.commitRecordsBadge.textContent = configured ? t("commitScanRootsConfigured") : t("commitScanRootsUnconfigured");
+  const configured = Boolean(records.configured && records.scanConfigured);
+  els.commitRecordsBadge.textContent = configured ? t("commitRecordsConfigured") : t("commitRecordsUnconfigured");
   els.commitRecordsBadge.className = `badge ${configured ? "on" : "off"}`;
   els.commitRepositoryCount.textContent = String(records.repositoryCount ?? 0);
-  els.commitRecordsPending.textContent = String(records.pending ?? 0);
   els.commitRecordsFailed.textContent = String(records.failed ?? 0);
-  els.commitLastScan.textContent = formatTime(records.lastScanAt);
-  const watcher = records.watcher || {};
-  els.commitWatchStatus.textContent = watcher.status || "-";
-  els.commitWatchCount.textContent = String(watcher.watchedRepositoryCount ?? 0);
-  els.commitWatchLastEvent.textContent = formatTime(watcher.lastEventAt);
+  els.commitWebhookMeta.textContent = records.webhookMasked
+    ? t("currentSet", records.webhookMasked)
+    : t("currentUnset");
+  els.commitTokenMeta.textContent = records.tokenConfigured
+    ? t("commitTokenSet")
+    : t("commitTokenUnset");
   const roots = records.scanRoots || [];
   if (!choosingCommitScanRoot && document.activeElement !== els.commitScanRoots) {
     els.commitScanRoots.value = roots.join("\n");
@@ -942,6 +957,8 @@ function syncClearControls() {
   els.webhookSecret.disabled = els.clearSecret.checked;
   els.recordsWebhookUrl.disabled = els.clearRecordsWebhook.checked;
   els.recordsWebhookToken.disabled = els.clearRecordsToken.checked;
+  els.commitWebhookUrl.disabled = els.clearCommitWebhook.checked;
+  els.commitWebhookToken.disabled = els.clearCommitToken.checked;
 }
 
 async function saveChangeRecordSettings() {
@@ -967,16 +984,32 @@ async function saveChangeRecordSettings() {
   els.recordsMsg.textContent = t("recordsSaved");
 }
 
-async function saveCommitScanRoots() {
+async function saveCommitRecordSettings() {
   const scanRoots = els.commitScanRoots.value
     .split(/\r?\n/)
     .map((value) => value.trim())
     .filter(Boolean);
+  const payload = {
+    clearWebhook: els.clearCommitWebhook.checked,
+    clearToken: els.clearCommitToken.checked,
+    scanRoots
+  };
+  if (els.commitWebhookUrl.value.trim()) {
+    payload.webhookUrl = els.commitWebhookUrl.value.trim();
+  }
+  if (els.commitWebhookToken.value.trim()) {
+    payload.webhookToken = els.commitWebhookToken.value.trim();
+  }
   await api("/api/commit-record-settings", {
     method: "POST",
-    body: JSON.stringify({ scanRoots })
+    body: JSON.stringify(payload)
   });
-  els.commitScanRootsMsg.textContent = t("commitScanRootsSaved");
+  els.commitWebhookUrl.value = "";
+  els.commitWebhookToken.value = "";
+  els.clearCommitWebhook.checked = false;
+  els.clearCommitToken.checked = false;
+  syncClearControls();
+  els.commitScanRootsMsg.textContent = t("commitSettingsSaved");
 }
 
 async function chooseCommitScanRoot() {
@@ -1044,8 +1077,13 @@ els.replayCommitRecordsBtn.addEventListener("click", () => {
   });
 });
 
-els.saveCommitScanRootsBtn.addEventListener("click", () => {
-  runAction(els.saveCommitScanRootsBtn, t("saveBusy"), t("commitScanRootsSaved"), saveCommitScanRoots);
+els.saveCommitRecordSettingsBtn.addEventListener("click", () => {
+  runAction(
+    els.saveCommitRecordSettingsBtn,
+    t("saveBusy"),
+    t("commitSettingsSaved"),
+    saveCommitRecordSettings
+  );
 });
 
 els.chooseCommitScanRootBtn.addEventListener("click", () => {
@@ -1078,6 +1116,8 @@ els.clearWebhook.addEventListener("change", syncClearControls);
 els.clearSecret.addEventListener("change", syncClearControls);
 els.clearRecordsWebhook.addEventListener("change", syncClearControls);
 els.clearRecordsToken.addEventListener("change", syncClearControls);
+els.clearCommitWebhook.addEventListener("change", syncClearControls);
+els.clearCommitToken.addEventListener("change", syncClearControls);
 
 async function runAction(button, busyText, successMessage, action) {
   try {

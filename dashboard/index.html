@@ -176,21 +176,32 @@
         <div class="card-head"><h2><span>$</span> Git 提交记录</h2><span id="commitRecordsBadge" class="badge">loading</span></div>
         <dl class="meta">
           <div><dt>仓库数</dt><dd id="commitRepositoryCount">-</dd></div>
-          <div><dt>待发送</dt><dd id="commitRecordsPending">-</dd></div>
           <div><dt>失败</dt><dd id="commitRecordsFailed">-</dd></div>
-          <div><dt>最近扫描</dt><dd id="commitLastScan">-</dd></div>
-          <div><dt>监听</dt><dd id="commitWatchStatus">-</dd></div>
-          <div><dt>监听仓库</dt><dd id="commitWatchCount">-</dd></div>
-          <div><dt>最近事件</dt><dd id="commitWatchLastEvent">-</dd></div>
         </dl>
-        <p class="hint" id="commitScanRootsHint">配置扫描目录后自动发现 Git 提交；不修改项目 Hook。</p>
+        <p class="hint" id="commitScanRootsHint">配置 Webhook 和扫描目录后自动发送 Git 提交；不修改项目 Hook。</p>
+        <div class="form-grid">
+          <label class="field">
+            <span>FEISHU_COMMIT_WEBHOOK_URL</span>
+            <input id="commitWebhookUrl" type="url" inputmode="url" autocomplete="off" placeholder="https://...">
+            <small id="commitWebhookMeta">-</small>
+          </label>
+          <label class="field">
+            <span>FEISHU_COMMIT_WEBHOOK_TOKEN</span>
+            <input id="commitWebhookToken" type="password" autocomplete="off" placeholder="optional Bearer token">
+            <small id="commitTokenMeta">-</small>
+          </label>
+          <div class="inline-checks">
+            <label><input id="clearCommitWebhook" type="checkbox"> <span id="clearCommitWebhookLabel">clear webhook</span></label>
+            <label><input id="clearCommitToken" type="checkbox"> <span id="clearCommitTokenLabel">clear token</span></label>
+          </div>
+        </div>
         <label class="field">
           <span class="field-heading"><span id="commitScanRootsLabel">扫描目录（每行一个绝对路径）</span><button id="chooseCommitScanRootBtn" class="btn btn-ghost btn-small" type="button">选择文件夹</button></span>
           <textarea id="commitScanRoots" rows="3" placeholder="D:\\project"></textarea>
           <small id="commitScanRootsMeta">当前：未配置</small>
         </label>
         <div class="actions commit-scan-actions">
-          <button id="saveCommitScanRootsBtn" class="btn btn-primary" type="button">保存扫描范围</button>
+          <button id="saveCommitRecordSettingsBtn" class="btn btn-primary" type="button">保存 Git 配置</button>
           <button id="replayCommitRecordsBtn" class="btn btn-ghost" type="button">重试失败</button>
         </div>
         <p id="commitScanRootsMsg" class="hint" role="status" aria-live="polite"></p>

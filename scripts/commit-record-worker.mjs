@@ -26,12 +26,18 @@ import {
   createRepositoryWatcher,
   getWatcherStatus
 } from "./lib/commit-watch.mjs";
+import { readRuntimeConfig } from "./lib/runtime-config.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SCANNER_SCRIPT = resolve(dirname(fileURLToPath(import.meta.url)), "commit-record-scanner.mjs");
 export const DEFAULT_SCAN_INTERVAL_MS = 5_000;
 export const DEFAULT_DELIVERY_INTERVAL_MS = 2_000;
 export const DEFAULT_DELIVERY_BATCH_SIZE = 20;
+const COMMIT_RECORD_ENV_KEYS = [
+  "FEISHU_COMMIT_WEBHOOK_URL",
+  "FEISHU_COMMIT_WEBHOOK_TOKEN",
+  "COMMIT_RECORD_SCAN_ROOTS",
+];
 
 loadEnv(".env");
 loadEnv(".env.local", new Set(["COMMIT_RECORD_SCAN_ROOTS"]));
@@ -268,10 +274,11 @@ export function startCommitRecordWorker({
       if (envDebounceTimer) timers.clearTimeout(envDebounceTimer);
       envDebounceTimer = timers.setTimeout(() => {
         envDebounceTimer = null;
-        loadEnv(".env.local", new Set(["COMMIT_RECORD_SCAN_ROOTS"]), rootDir);
+        reloadEnvKeys(COMMIT_RECORD_ENV_KEYS, rootDir);
         runDiscovery();
         writeWatcherState();
         void runReconcile();
+        void runDelivery();
       }, 1000);
     });
   }
@@ -320,10 +327,14 @@ export async function deliver(
   {
     rootDir = ROOT,
     batchSize = DEFAULT_DELIVERY_BATCH_SIZE,
-    webhookUrl = process.env.FEISHU_COMMIT_WEBHOOK_URL?.trim() || "",
-    webhookToken = process.env.FEISHU_COMMIT_WEBHOOK_TOKEN?.trim() || ""
+    webhookUrl,
+    webhookToken
   } = {}
 ) {
+  const config = readRuntimeConfig({ rootDir, keys: COMMIT_RECORD_ENV_KEYS });
+  webhookUrl = webhookUrl ?? config.FEISHU_COMMIT_WEBHOOK_URL?.trim() ?? "";
+  webhookToken = webhookToken ?? config.FEISHU_COMMIT_WEBHOOK_TOKEN?.trim() ?? "";
+
   if (dryRun) {
     const items = readyCommitItems({ rootDir, limit: batchSize });
     for (const item of items) {
@@ -381,6 +392,14 @@ function loadEnv(name, overrideKeys = new Set(), rootDir = ROOT) {
       process.env[key] = line.slice(index + 1).trim().replace(/^['"]|['"]$/g, "");
     }
   }
+}
+
+function reloadEnvKeys(keys, rootDir) {
+  for (const key of keys) {
+    delete process.env[key];
+  }
+  loadEnv(".env", new Set(), rootDir);
+  loadEnv(".env.local", new Set(keys), rootDir);
 }
 
 function consumeFlag(args, flag) {

@@ -102,37 +102,58 @@ export function normalizeHookPayload(payload, source) {
 }
 
 export function extractCursorPromptFromHookLog(log, sessionId, turnId) {
-  const text = String(log || "");
-  let offset = 0;
-  while (offset < text.length) {
-    const inputStart = text.indexOf("INPUT:", offset);
-    if (inputStart === -1) {
-      break;
-    }
-    const jsonStart = text.indexOf("{", inputStart);
-    const outputStart = text.indexOf("\nOUTPUT:", jsonStart);
-    if (jsonStart === -1 || outputStart === -1) {
-      break;
-    }
-    try {
-      const payload = JSON.parse(text.slice(jsonStart, outputStart).trim());
-      if (
-        payload.hook_event_name === "beforeSubmitPrompt" &&
-        (payload.session_id || payload.conversation_id) === sessionId &&
-        (!turnId || payload.generation_id === turnId)
-      ) {
-        return String(payload.prompt || "").trim();
+  const entries = cursorEntriesBeforeStop(log, sessionId, turnId);
+  let exactPrompt = "";
+  let latestPrompt = "";
+  for (const payload of entries) {
+    if (
+      payload.hook_event_name === "beforeSubmitPrompt" &&
+      (payload.session_id || payload.conversation_id) === sessionId &&
+      typeof payload.prompt === "string" &&
+      payload.prompt.trim()
+    ) {
+      latestPrompt = payload.prompt.trim();
+      if (!turnId || payload.generation_id === turnId) {
+        exactPrompt = latestPrompt;
       }
-    } catch {
-      // Cursor may also log malformed payloads; keep looking for a valid matching entry.
     }
-    offset = outputStart + 1;
   }
-  return "";
+  return exactPrompt || latestPrompt;
 }
 
 export function extractCursorResponseFromHookLog(log, sessionId, turnId, fallback = "") {
+  const entries = cursorEntriesBeforeStop(log, sessionId, turnId);
+  let exactResponse = "";
+  let latestResponse = "";
+  for (const payload of entries) {
+    if (
+      payload.hook_event_name === "afterAgentResponse" &&
+      (payload.session_id || payload.conversation_id) === sessionId &&
+      typeof payload.text === "string" &&
+      payload.text.trim()
+    ) {
+      latestResponse = payload.text.trim();
+      if (!turnId || payload.generation_id === turnId) {
+        exactResponse = latestResponse;
+      }
+    }
+  }
+  return exactResponse || latestResponse || String(fallback || "");
+}
+
+function cursorEntriesBeforeStop(log, sessionId, turnId) {
+  const entries = parseCursorHookEntries(log);
+  const stopIndex = entries.findIndex((payload) =>
+    payload.hook_event_name === "stop" &&
+    (payload.session_id || payload.conversation_id) === sessionId &&
+    (!turnId || payload.generation_id === turnId)
+  );
+  return stopIndex === -1 ? entries : entries.slice(0, stopIndex);
+}
+
+function parseCursorHookEntries(log) {
   const text = String(log || "");
+  const entries = [];
   let offset = 0;
   while (offset < text.length) {
     const inputStart = text.indexOf("INPUT:", offset);
@@ -145,22 +166,13 @@ export function extractCursorResponseFromHookLog(log, sessionId, turnId, fallbac
       break;
     }
     try {
-      const payload = JSON.parse(text.slice(jsonStart, outputStart).trim());
-      if (
-        payload.hook_event_name === "afterAgentResponse" &&
-        (payload.session_id || payload.conversation_id) === sessionId &&
-        (!turnId || payload.generation_id === turnId) &&
-        typeof payload.text === "string" &&
-        payload.text.trim()
-      ) {
-        return payload.text.trim();
-      }
+      entries.push(JSON.parse(text.slice(jsonStart, outputStart).trim()));
     } catch {
-      // Keep looking for a valid matching response.
+      // Cursor may also log malformed payloads; keep looking for valid entries.
     }
     offset = outputStart + 1;
   }
-  return String(fallback || "");
+  return entries;
 }
 
 function findCursorPromptFromLogs(payload) {

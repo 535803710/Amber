@@ -41,6 +41,8 @@ test("团队安装保留现有配置并同时接入 Cursor 和 Codex", () => {
       "command = \"keep\"",
       ""
     ].join("\r\n"));
+    const persistedConfig = "FEISHU_CHANGE_WEBHOOK_URL=https://example.test/change\n";
+    writeText(resolve(target, ".env.local"), persistedConfig);
 
     const nodeExecutable = "C:/Program Files/nodejs/node.exe";
     const result = installTeamSetup({
@@ -52,12 +54,13 @@ test("团队安装保留现有配置并同时接入 Cursor 和 Codex", () => {
     assert.equal(result.changedFiles.length, 4);
     assert.ok(result.backupDir);
     assert.ok(existsSync(resolve(target, ".env.local")));
+    assert.equal(readFileSync(resolve(target, ".env.local"), "utf8"), persistedConfig);
     assert.ok(existsSync(resolve(target, "scripts/mcp-stdio-server.mjs")));
 
     const cursorHooks = readJson(resolve(home, ".cursor/hooks.json"));
     assert.equal(cursorHooks.hooks.stop[0].command, "node C:/tools/keep-cursor-hook.mjs");
     assert.equal(cursorHooks.hooks.stop.filter((item) => item.command.includes("on-change-event.mjs")).length, 1);
-    assert.match(cursorHooks.hooks.beforeSubmitPrompt[0].command, /^"C:\\Program Files\\nodejs\\node\.exe"/);
+    assert.match(cursorHooks.hooks.beforeSubmitPrompt[0].command, /^node /);
     const cursorMcp = readJson(resolve(home, ".cursor/mcp.json"));
     assert.equal(cursorMcp.mcpServers.codegraph.command, "codegraph");
     assert.equal(cursorMcp.mcpServers.amber.command, "C:\\Program Files\\nodejs\\node.exe");
@@ -65,6 +68,7 @@ test("团队安装保留现有配置并同时接入 Cursor 和 Codex", () => {
     const codexHooks = readJson(resolve(home, ".codex/hooks.json"));
     assert.equal(codexHooks.hooks.Stop[0].matcher, "keep");
     assert.equal(JSON.stringify(codexHooks).match(/on-change-event\.mjs/g)?.length, 2);
+    assert.match(codexHooks.hooks.UserPromptSubmit.at(-1).hooks[0].command, /^node /);
     const codexToml = readFileSync(resolve(home, ".codex/config.toml"), "utf8");
     assert.match(codexToml, /\[mcp_servers\.keep\]/);
     assert.match(codexToml, /\[mcp_servers\.amber\]/);
@@ -85,6 +89,7 @@ test("团队安装保留现有配置并同时接入 Cursor 和 Codex", () => {
       nodeExecutable
     });
     assert.deepEqual(rerun.changedFiles, []);
+    assert.equal(readFileSync(resolve(target, ".env.local"), "utf8"), persistedConfig);
   } finally {
     rmSync(root.base, { recursive: true, force: true });
   }
@@ -214,11 +219,99 @@ test("Windows 入口使用对应 Shell 的安全路径语法", () => {
   const askRule = readFileSync(resolve(repositoryRoot, ".cursor/rules/amber-askquestion.mdc"), "utf8");
   assert.match(amberBatch, /--target "%ROOT%\."/);
   assert.match(amberBatch, /scripts\\resolve-node\.ps1/);
+  assert.match(amberBatch, /amber\.bat config\s+Open Dashboard configuration/);
   assert.match(installBatch, /scripts\\resolve-node\.ps1/);
   assert.match(uninstallBatch, /scripts\\resolve-node\.ps1/);
   assert.match(uninstallBatch, /uninstall --target "%~dp0\."/);
   assert.match(askRule, /node "\$env:AMBER_HOME\/scripts\/notify-ask\.mjs"/);
   assert.doesNotMatch(askRule, /%AMBER_HOME%/);
+});
+
+test("解压目录中的 amber.bat 委托给已安装的 AMBER_HOME", { skip: process.platform !== "win32" }, () => {
+  const base = mkdtempSync(resolve(tmpdir(), "amber-entry-redirect-"));
+  const sourceRoot = resolve(base, "download folder", "Amber");
+  const installedRoot = resolve(base, "installed folder", "Amber");
+  const marker = resolve(base, "redirected.txt");
+  const repositoryRoot = resolve(import.meta.dirname, "..");
+  try {
+    writeText(
+      resolve(sourceRoot, "amber.bat"),
+      readFileSync(resolve(repositoryRoot, "amber.bat"), "utf8")
+    );
+    writeText(
+      resolve(installedRoot, "amber.bat"),
+      "@echo off\r\n> \"%AMBER_TEST_MARKER%\" echo redirected %*\r\nexit /b 0\r\n"
+    );
+
+    const sourceBatch = resolve(sourceRoot, "amber.bat");
+    const result = spawnSync(
+      "cmd.exe",
+      ["/d", "/s", "/c", `call "${sourceBatch}" status`],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          AMBER_HOME: installedRoot,
+          AMBER_TEST_MARKER: marker
+        },
+        windowsVerbatimArguments: true
+      }
+    );
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.equal(readFileSync(marker, "utf8").trim(), "redirected status");
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("Windows 后台启动保留含空格的脚本路径", { skip: process.platform !== "win32" }, () => {
+  const base = mkdtempSync(resolve(tmpdir(), "amber-background-path-"));
+  const target = resolve(base, "Amber runtime with spaces");
+  const scripts = resolve(target, "scripts");
+  const watchMarker = resolve(base, "watch.json");
+  const healthMarker = resolve(base, "health.json");
+  const repositoryRoot = resolve(import.meta.dirname, "..");
+  try {
+    writeText(
+      resolve(scripts, "start-watch-background.ps1"),
+      readFileSync(resolve(repositoryRoot, "scripts/start-watch-background.ps1"), "utf8")
+    );
+    writeText(resolve(scripts, "resolve-node.ps1"), "Write-Output $env:AMBER_TEST_NODE\r\n");
+    writeText(
+      resolve(scripts, "watch-all.mjs"),
+      "import { writeFileSync } from 'node:fs'; writeFileSync(process.env.AMBER_WATCH_MARKER, JSON.stringify(process.argv.slice(2)));\n"
+    );
+    writeText(
+      resolve(scripts, "health-monitor-worker.mjs"),
+      "import { writeFileSync } from 'node:fs'; writeFileSync(process.env.AMBER_HEALTH_MARKER, JSON.stringify(process.argv.slice(2)));\n"
+    );
+
+    const result = spawnSync("powershell.exe", [
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      resolve(scripts, "start-watch-background.ps1"),
+      "-Profile",
+      "core"
+    ], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        AMBER_TEST_NODE: process.execPath,
+        AMBER_WATCH_MARKER: watchMarker,
+        AMBER_HEALTH_MARKER: healthMarker
+      }
+    });
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    waitForFiles([watchMarker, healthMarker]);
+    assert.deepEqual(JSON.parse(readFileSync(watchMarker, "utf8")), ["--profile", "core"]);
+    assert.deepEqual(JSON.parse(readFileSync(healthMarker, "utf8")), []);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
 });
 
 test("doctor 将无法解析的飞书 CLI 报告为检查失败", () => {
@@ -314,4 +407,11 @@ function readJson(path) {
 function writeText(path, value) {
   mkdirSync(resolve(path, ".."), { recursive: true });
   writeFileSync(path, value, "utf8");
+}
+
+function waitForFiles(paths, timeoutMs = 3_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline && paths.some((path) => !existsSync(path))) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+  }
 }

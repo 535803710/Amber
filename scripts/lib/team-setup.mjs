@@ -89,11 +89,11 @@ export function inspectTeamSetup({ targetRoot, userHome }) {
   };
 }
 
-export function mergeCursorHooks(input = {}, amberRoot, nodeExecutable = "node") {
+export function mergeCursorHooks(input = {}, amberRoot) {
   const document = cloneObject(input);
   document.version = document.version || 1;
   document.hooks = objectValue(document.hooks);
-  const commands = cursorHookCommands(amberRoot, nodeExecutable);
+  const commands = cursorHookCommands(amberRoot);
   for (const [event, desired] of Object.entries(commands)) {
     const current = Array.isArray(document.hooks[event]) ? document.hooks[event] : [];
     const preserved = current.filter((item) => !isAmberHook(item));
@@ -114,10 +114,10 @@ export function removeCursorHooks(input = {}) {
   return document;
 }
 
-export function mergeCodexHooks(input = {}, amberRoot, nodeExecutable = "node") {
+export function mergeCodexHooks(input = {}, amberRoot) {
   const document = cloneObject(input);
   document.hooks = objectValue(document.hooks);
-  const commands = codexHookCommands(amberRoot, nodeExecutable);
+  const commands = codexHookCommands(amberRoot);
   for (const [event, desired] of Object.entries(commands)) {
     const groups = Array.isArray(document.hooks[event]) ? document.hooks[event] : [];
     const preserved = groups.map(removeAmberHooksFromGroup).filter(Boolean);
@@ -175,9 +175,9 @@ function prepareInstallChanges(paths, targetRoot, nodeExecutable) {
   const codexHooks = readJsonIfPresent(paths.codexHooks);
   const codexToml = readTextIfPresent(paths.codexToml);
   return [
-    jsonChange(paths.cursorHooks, cursorHooks, mergeCursorHooks(cursorHooks, targetRoot, nodeExecutable)),
+    jsonChange(paths.cursorHooks, cursorHooks, mergeCursorHooks(cursorHooks, targetRoot)),
     jsonChange(paths.cursorMcp, cursorMcp, mergeMcpJson(cursorMcp, targetRoot, nodeExecutable)),
-    jsonChange(paths.codexHooks, codexHooks, mergeCodexHooks(codexHooks, targetRoot, nodeExecutable)),
+    jsonChange(paths.codexHooks, codexHooks, mergeCodexHooks(codexHooks, targetRoot)),
     textChange(paths.codexToml, codexToml, mergeCodexToml(codexToml, targetRoot, nodeExecutable))
   ];
 }
@@ -301,10 +301,10 @@ function readTextIfPresent(path) {
   return existsSync(path) ? readFileSync(path, "utf8") : "";
 }
 
-function cursorHookCommands(amberRoot, nodeExecutable) {
+function cursorHookCommands(amberRoot) {
   const change = quotedCommand(amberRoot, "on-change-event.mjs");
   const prompt = quotedCommand(amberRoot, "on-cursor-event.mjs");
-  const node = quoteShellToken(resolveNodeCommand(nodeExecutable));
+  const node = "node";
   return {
     beforeSubmitPrompt: [`${node} ${change} --source Cursor`],
     afterAgentResponse: [`${node} ${prompt}`, `${node} ${change} --source Cursor`],
@@ -312,10 +312,10 @@ function cursorHookCommands(amberRoot, nodeExecutable) {
   };
 }
 
-function codexHookCommands(amberRoot, nodeExecutable) {
+function codexHookCommands(amberRoot) {
   const change = quotedCommand(amberRoot, "on-change-event.mjs");
   const prompt = quotedCommand(amberRoot, "on-codex-event.mjs");
-  const node = quoteShellToken(resolveNodeCommand(nodeExecutable));
+  const node = "node";
   return {
     UserPromptSubmit: [{ type: "command", command: `${node} ${change} --source ChatGPT`, timeout: 30 }],
     Stop: [
@@ -333,12 +333,6 @@ function resolveNodeCommand(value) {
 
 function resolveExecutablePath(command) {
   return /[\\/]/.test(command) ? resolve(command) : command;
-}
-
-function quoteShellToken(value) {
-  return /\s/.test(value) || /[\\/]/.test(value)
-    ? `"${value.replace(/"/g, '\\"')}"`
-    : value;
 }
 
 function quotedCommand(amberRoot, file) {

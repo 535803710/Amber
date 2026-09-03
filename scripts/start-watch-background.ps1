@@ -77,7 +77,7 @@ if (-not $watchRunning) {
     Write-Log "starting watch:all root=$Root"
     $watchProcess = Start-Process `
         -FilePath $node `
-        -ArgumentList @($WatchScript, "--profile", $Profile) `
+        -ArgumentList @("`"$WatchScript`"", "--profile", $Profile) `
         -WorkingDirectory $Root `
         -WindowStyle Hidden `
         -RedirectStandardOutput $LogFile `
@@ -92,7 +92,7 @@ Write-RuntimeDesired
 if (-not $healthRunning) {
     $healthProcess = Start-Process `
         -FilePath $node `
-        -ArgumentList @($HealthScript) `
+        -ArgumentList @("`"$HealthScript`"") `
         -WorkingDirectory $Root `
         -WindowStyle Hidden `
         -RedirectStandardOutput $HealthLogFile `

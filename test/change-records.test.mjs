@@ -549,6 +549,83 @@ test("Cursor response prefers the UTF-8 hook log over a mojibake stdin payload",
   );
 });
 
+test("Cursor log recovery uses the latest turn when stop has a different generation", () => {
+  const log = [
+    "beforeSubmitPrompt",
+    "INPUT:",
+    JSON.stringify({
+      conversation_id: "session-1",
+      generation_id: "old-turn",
+      prompt: "旧需求",
+      hook_event_name: "beforeSubmitPrompt"
+    }, null, 2),
+    "\nOUTPUT:",
+    "{}",
+    "beforeSubmitPrompt",
+    "INPUT:",
+    JSON.stringify({
+      conversation_id: "session-1",
+      generation_id: "current-turn",
+      prompt: "修改 test.md，增加当前时间",
+      hook_event_name: "beforeSubmitPrompt"
+    }, null, 2),
+    "\nOUTPUT:",
+    "{}",
+    "afterAgentResponse",
+    "INPUT:",
+    JSON.stringify({
+      conversation_id: "session-1",
+      generation_id: "current-turn",
+      text: "已修改 test.md，中文记录正常",
+      hook_event_name: "afterAgentResponse"
+    }, null, 2),
+    "\nOUTPUT:",
+    "{}",
+    "stop",
+    "INPUT:",
+    JSON.stringify({
+      conversation_id: "session-1",
+      generation_id: "stop-turn",
+      hook_event_name: "stop"
+    }, null, 2),
+    "\nOUTPUT:",
+    "{}",
+    "beforeSubmitPrompt",
+    "INPUT:",
+    JSON.stringify({
+      conversation_id: "session-1",
+      generation_id: "later-turn",
+      prompt: "下一轮需求",
+      hook_event_name: "beforeSubmitPrompt"
+    }, null, 2),
+    "\nOUTPUT:",
+    "{}",
+    "afterAgentResponse",
+    "INPUT:",
+    JSON.stringify({
+      conversation_id: "session-1",
+      generation_id: "later-turn",
+      text: "下一轮结果",
+      hook_event_name: "afterAgentResponse"
+    }, null, 2),
+    "\nOUTPUT:",
+    "{}"
+  ].join("\n");
+
+  assert.equal(
+    extractCursorPromptFromHookLog(log, "session-1", "stop-turn"),
+    "修改 test.md，增加当前时间"
+  );
+  assert.equal(
+    extractCursorResponseFromHookLog(log, "session-1", "stop-turn", "乱码结果"),
+    "已修改 test.md，中文记录正常"
+  );
+  assert.equal(
+    extractCursorPromptFromHookLog(log, "session-1", "old-turn"),
+    "旧需求"
+  );
+});
+
 test("pre-existing dirty files are excluded from the turn", () => {
   withRepo(({ repo, state }) => {
     writeFileSync(resolve(repo, "before.txt"), "dirty before turn\n", "utf8");
