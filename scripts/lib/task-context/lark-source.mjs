@@ -110,7 +110,7 @@ export function runLarkCli(args, { timeoutMs = QUERY_TIMEOUT_MS } = {}) {
     child.once("close", (code) => {
       clearTimeout(timer);
       if (timedOut) {
-        reject(new Error("查询飞书超时（8 秒）。"));
+        reject(new Error(`查询飞书超时（${Math.round(timeoutMs / 1000)} 秒）。`));
         return;
       }
       if (code !== 0) {

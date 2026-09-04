@@ -71,7 +71,7 @@ command = "node"
 args = ["C:/Users/<用户名>/AppData/Local/Amber/scripts/mcp-stdio-server.mjs"]
 ```
 
-该工具默认查询当前共享 Base 的 AI 修改记录和 Git 提交记录表，并在飞书登录、网络、权限或响应异常时回退到目标仓库 `.local` 记录。团队需要切换数据源时，可在 Amber 安装目录的 `.env.local` 设置 `AMBER_BASE_TOKEN`、`AMBER_AI_TABLE_ID`、`AMBER_COMMIT_TABLE_ID`；这些值会覆盖默认表配置。调用参数为仓库绝对路径 `workspace_root`、当前任务 `task`，以及可选的相关 `files`、返回上限 `limit` 和输出密度 `detail`。
+该工具在已配置 Base token 与表 ID 时查询飞书的 AI 修改记录和 Git 提交记录表，并在飞书登录、网络、权限或响应异常时回退到目标仓库 `.local` 记录。未配置 Base token 与表 ID 时 MCP 不能读飞书，回退本地队列。团队可在 Amber 安装目录的 `.env.local` 设置 `AMBER_BASE_TOKEN`、`AMBER_AI_TABLE_ID`、`AMBER_COMMIT_TABLE_ID`。调用参数为仓库绝对路径 `workspace_root`、当前任务 `task`，以及可选的相关 `files`、返回上限 `limit` 和输出密度 `detail`。
 
 输出契约为 v2，使用 `evidence` 代替旧 `timeline`。`detail` 默认为 `minimal`，默认返回 3 条、最多 10 条，每条包含用户需求、修改结果、完成时间和涉及文件；`compact` 增加分支及强关联提交，`full` 再增加来源和匹配依据。历史演变、最终决定、重构、迁移或删除等任务会在同一次调用中自动提升到 `compact + 8`，并在顶层 `retrieval` 标明实际生效的密度、上限和原因。独立 Git 提交不会返回。需求和结果保留开头、关键词上下文与结尾，文件列表仍受固定长度限制；输出不包含邮箱、会话 ID、Token、Webhook、附件、完整源码或完整 CLI 错误。
 

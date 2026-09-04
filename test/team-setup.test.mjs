@@ -117,6 +117,60 @@ test("团队卸载只移除 Amber 项并保留数据和其他工具配置", () =
   }
 });
 
+test("全新安装创建空的 Base 和 Webhook 配置，不写入默认 token", () => {
+  const root = fixture();
+  try {
+    installTeamSetup({ sourceRoot: root.source, targetRoot: root.target, userHome: root.home });
+    const envLocal = readFileSync(resolve(root.target, ".env.local"), "utf8");
+    assert.match(envLocal, /^AMBER_BASE_TOKEN=$/m);
+    assert.match(envLocal, /^AMBER_AI_TABLE_ID=$/m);
+    assert.match(envLocal, /^AMBER_COMMIT_TABLE_ID=$/m);
+    assert.match(envLocal, /^FEISHU_CHANGE_WEBHOOK_URL=$/m);
+    assert.match(envLocal, /^FEISHU_COMMIT_WEBHOOK_URL=$/m);
+    assert.doesNotMatch(envLocal, /Inmhb4Vl0alBIAsvzaxcxC0Ln0d/);
+    assert.doesNotMatch(envLocal, /tblppOxOQCQkAzoY/);
+    assert.doesNotMatch(envLocal, /tbl9MKpf3sAHG4tR/);
+  } finally {
+    rmSync(root.base, { recursive: true, force: true });
+  }
+});
+
+test("缺少 LICENSE 时安装不会崩溃，存在则拷贝", () => {
+  const root = fixture();
+  try {
+    installTeamSetup({ sourceRoot: root.source, targetRoot: root.target, userHome: root.home });
+    assert.equal(existsSync(resolve(root.target, "LICENSE")), false);
+    writeText(resolve(root.source, "LICENSE"), "Apache-2.0\n");
+    installTeamSetup({ sourceRoot: root.source, targetRoot: root.target, userHome: root.home });
+    assert.equal(readFileSync(resolve(root.target, "LICENSE"), "utf8"), "Apache-2.0\n");
+  } finally {
+    rmSync(root.base, { recursive: true, force: true });
+  }
+});
+
+test("人员复测文档不会进入安装目录，可选 runtime 目录存在才拷贝", () => {
+  const root = fixture();
+  try {
+    writeText(resolve(root.source, "docs/Windows-MVP-mvp.3-杨金辉复测步骤-2026-09-03.md"), "secret\n");
+    writeText(resolve(root.source, "docs/Windows-MVP-第二台机器试测问题-2026-09-03.md"), "secret\n");
+    writeText(resolve(root.source, "docs/Windows-MVP-第二台机器完整复测步骤-2026-09-03.md"), "secret\n");
+    writeText(resolve(root.source, "docs/团队安装说明.md"), "keep\n");
+    writeText(resolve(root.source, "bin/amber.mjs"), "export {}\n");
+    writeText(resolve(root.source, "skills/amber/SKILL.md"), "# Amber\n");
+    writeText(resolve(root.source, "templates/base.json"), "{}\n");
+    installTeamSetup({ sourceRoot: root.source, targetRoot: root.target, userHome: root.home });
+    assert.equal(existsSync(resolve(root.target, "docs/Windows-MVP-mvp.3-杨金辉复测步骤-2026-09-03.md")), false);
+    assert.equal(existsSync(resolve(root.target, "docs/Windows-MVP-第二台机器试测问题-2026-09-03.md")), false);
+    assert.equal(existsSync(resolve(root.target, "docs/Windows-MVP-第二台机器完整复测步骤-2026-09-03.md")), false);
+    assert.equal(readFileSync(resolve(root.target, "docs/团队安装说明.md"), "utf8"), "keep\n");
+    assert.ok(existsSync(resolve(root.target, "bin/amber.mjs")));
+    assert.ok(existsSync(resolve(root.target, "skills/amber/SKILL.md")));
+    assert.ok(existsSync(resolve(root.target, "templates/base.json")));
+  } finally {
+    rmSync(root.base, { recursive: true, force: true });
+  }
+});
+
 test("损坏的 IDE JSON 会在写入任何用户配置前停止安装", () => {
   const root = fixture();
   try {

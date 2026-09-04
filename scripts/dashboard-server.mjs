@@ -324,7 +324,7 @@ async function buildState() {
     changeRecords: {
       ...getChangeRecordStatus({ rootDir: ROOT_DIR }),
       webhookMasked: maskWebhookUrl(process.env.FEISHU_CHANGE_WEBHOOK_URL?.trim() || ""),
-      baseUrl: "https://transsioner.feishu.cn/base/Inmhb4Vl0alBIAsvzaxcxC0Ln0d"
+      baseUrl: ""
     },
     commitRecords: readCommitRecordConfig(),
     health,

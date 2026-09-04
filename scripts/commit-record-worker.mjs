@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync, watch } from "node:fs";
+import { existsSync, readFileSync, unwatchFile, watchFile } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertWebhookSuccess, postJson } from "./change-record-worker.mjs";
@@ -268,9 +268,9 @@ export function startCommitRecordWorker({
   }, discoveryMs);
   const deliveryTimer = timers.setInterval(() => void runDelivery(), deliveryIntervalMs);
 
-  if (existsSync(resolve(rootDir, ".env.local"))) {
-    envWatcher = watch(rootDir, (eventType, filename) => {
-      if (!filename || !filename.includes(".env.local")) return;
+  const envLocalPath = resolve(rootDir, ".env.local");
+  if (existsSync(envLocalPath)) {
+    const onEnvLocalChange = () => {
       if (envDebounceTimer) timers.clearTimeout(envDebounceTimer);
       envDebounceTimer = timers.setTimeout(() => {
         envDebounceTimer = null;
@@ -280,7 +280,18 @@ export function startCommitRecordWorker({
         void runReconcile();
         void runDelivery();
       }, 1000);
+    };
+    // Directory fs.watch can abort Node on Windows (libuv fs-event assertion)
+    // when the install tree is busy. Polling the env file survives atomic replaces.
+    watchFile(envLocalPath, { interval: 250, persistent: true }, (current, previous) => {
+      if (current.mtimeMs === previous.mtimeMs && current.size === previous.size) return;
+      onEnvLocalChange();
     });
+    envWatcher = {
+      close() {
+        unwatchFile(envLocalPath);
+      }
+    };
   }
 
   return {

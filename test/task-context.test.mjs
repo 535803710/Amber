@@ -5,11 +5,9 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import {
-  AI_TABLE_ID,
-  COMMIT_TABLE_ID,
   QUERY_LIMIT,
   buildRecordListArgs,
-  getTaskContext,
+  getTaskContext as loadTaskContext,
   mapRemoteRecords,
   normalizeRequest,
   resolveRetrievalPolicy,
@@ -21,10 +19,22 @@ import { resolveLarkCliInvocation } from "../scripts/lib/task-context/lark-sourc
 beforeEach(() => clearCache());
 
 const WORKSPACE = "D:/project/Amber";
+const SOURCE_ENV = {
+  AMBER_BASE_TOKEN: "test-base-token",
+  AMBER_AI_TABLE_ID: "tblAiTestFixture01",
+  AMBER_COMMIT_TABLE_ID: "tblCommitTestFix01"
+};
+
+function getTaskContext(input, options = {}) {
+  return loadTaskContext(input, {
+    ...options,
+    env: { ...SOURCE_ENV, ...(options.env || {}) }
+  });
+}
 
 test("飞书双表查询按项目过滤、投影字段、排序并限制到 200 条", () => {
   const aiArgs = buildRecordListArgs({
-    tableId: AI_TABLE_ID,
+    tableId: SOURCE_ENV.AMBER_AI_TABLE_ID,
     fields: ["用户需求", "项目"],
     project: "Amber",
     sortField: "完成时间"
@@ -144,7 +154,7 @@ test("compact 输出以 AI 修改为主并嵌套强关联提交", async () => {
     now: 1,
     runCommand: async (args) => {
       calls.push(args);
-      return args.includes(AI_TABLE_ID)
+      return args.includes(SOURCE_ENV.AMBER_AI_TABLE_ID)
         ? JSON.stringify({ data: { items: [{ record_id: "ai-row", fields: {
           "事件 ID": "ai-1",
           "用户需求": "实现 MCP 双表查询",
@@ -192,7 +202,7 @@ test("minimal 默认最多返回 3 条，并暴露需求、结果、时间和文
     files: ["scripts/lib/task-context.mjs"]
   }, {
     now: 11,
-    runCommand: async (args) => JSON.stringify({ data: { items: args.includes(AI_TABLE_ID)
+    runCommand: async (args) => JSON.stringify({ data: { items: args.includes(SOURCE_ENV.AMBER_AI_TABLE_ID)
       ? Array.from({ length: 4 }, (_, index) => ({ fields: {
         "事件 ID": `ai-minimal-${index}`,
         "用户需求": "优化 MCP 输出",
@@ -236,7 +246,7 @@ test("历史演变题会在一次调用中升级为 compact 加 8 条并按时�
     now: 20,
     runCommand: async (args) => {
       calls.push(args);
-      if (args.includes(AI_TABLE_ID)) {
+      if (args.includes(SOURCE_ENV.AMBER_AI_TABLE_ID)) {
         return JSON.stringify({ data: { items: history.map(([id, occurredAt, task, resultText, file]) => ({ fields: {
           "事件 ID": id,
           "用户需求": task,
@@ -309,7 +319,7 @@ test("独立 Git 提交不会进入证据，full 输出受长度限制", async (
     limit: 1
   }, {
     now: 12,
-    runCommand: async (args) => JSON.stringify({ data: { items: args.includes(AI_TABLE_ID) ? [{ fields: {
+    runCommand: async (args) => JSON.stringify({ data: { items: args.includes(SOURCE_ENV.AMBER_AI_TABLE_ID) ? [{ fields: {
       "事件 ID": "ai-full",
       "用户需求": `MCP 输出限制 ${longTask}`,
       "修改结果": longResult,
@@ -403,6 +413,38 @@ test("minimal 只查 AI 表，compact 并行查 AI 和 commit 两张表", async 
   assert.equal(maximum, 2);
 });
 
+test("未配置 Base token 时不查询飞书并回退本地队列", async () => {
+  await withLocalState(async (root) => {
+    writeEnvelope(root, "change", "ai-local-no-token", {
+      event_id: "ai-local-no-token",
+      completed_at: "2026-08-04T11:00:00.000Z",
+      project: "amber-task-context-",
+      repo_path: root,
+      branch: "main",
+      prompt_summary: "修复 MCP 查询",
+      result_summary: "无 token 时回退本地记录",
+      changed_files: [{ path: "scripts/task-context.mjs" }]
+    });
+    let calls = 0;
+    const value = await loadTaskContext({
+      workspace_root: root,
+      task: "修复 MCP 查询",
+      files: ["scripts/task-context.mjs"]
+    }, {
+      now: 3,
+      env: {},
+      runCommand: async () => {
+        calls += 1;
+        return JSON.stringify({ data: { items: [{ fields: { "事件 ID": "should-not-query" } }] } });
+      }
+    });
+    assert.equal(calls, 0);
+    assert.equal(value.status, "degraded");
+    assert.equal(value.evidence[0].task, "修复 MCP 查询");
+    assert.match(value.message, /本地回退/);
+  });
+});
+
 test("飞书失败时回退本地队列，并只返回 degraded 和简短说明", async () => {
   await withLocalState(async (root) => {
     writeEnvelope(root, "change", "ai-local", {
@@ -459,7 +501,7 @@ test("飞书无记录但本地回退命中时也返回 degraded", async () => {
 test("无关联任务不会返回牵强上下文", async () => {
   const result = await getTaskContext({ workspace_root: WORKSPACE, task: "量子咖啡机校准" }, {
     now: 4,
-    runCommand: async (args) => JSON.stringify({ data: { items: args.includes(AI_TABLE_ID) ? [{ fields: {
+    runCommand: async (args) => JSON.stringify({ data: { items: args.includes(SOURCE_ENV.AMBER_AI_TABLE_ID) ? [{ fields: {
       "事件 ID": "ai-unrelated",
       "项目": "Amber",
       "用户需求": "修复健康检查",
@@ -477,7 +519,7 @@ test("同仓库但没有文件或语义锚点的记录不会成为强历史", as
     files: ["scripts/database-migration.mjs"]
   }, {
     now: 5,
-    runCommand: async (args) => JSON.stringify({ data: { items: args.includes(AI_TABLE_ID) ? [{ fields: {
+    runCommand: async (args) => JSON.stringify({ data: { items: args.includes(SOURCE_ENV.AMBER_AI_TABLE_ID) ? [{ fields: {
       "事件 ID": "ai-same-repo-unrelated",
       "项目": "Amber",
       "仓库路径": WORKSPACE,
@@ -499,7 +541,7 @@ test("通用上下文词不会把无关的项目文档记录判为强历史", as
     files: ["scripts/lib/task-context.mjs"]
   }, {
     now: 6,
-    runCommand: async (args) => JSON.stringify({ data: { items: args.includes(AI_TABLE_ID) ? [{ fields: {
+    runCommand: async (args) => JSON.stringify({ data: { items: args.includes(SOURCE_ENV.AMBER_AI_TABLE_ID) ? [{ fields: {
       "事件 ID": "ai-generic-doc-unrelated",
       "项目": "Amber",
       "仓库路径": WORKSPACE,
@@ -543,7 +585,7 @@ test("飞书 CLI 的列式 JSON 包络会按字段名还原", () => {
     record_id_list: ["row-1"],
     data: [["ai-1", "Amber", "a.mjs"]]
   } }));
-  const mapped = mapRemoteRecords(records, AI_TABLE_ID);
+  const mapped = mapRemoteRecords(records, SOURCE_ENV.AMBER_AI_TABLE_ID, "change");
   assert.equal(mapped[0].id, "ai-1");
   assert.deepEqual(mapped[0].files, ["a.mjs"]);
 });
@@ -554,7 +596,7 @@ test("远程 JSON 包络和字段投影可兼容记录列表返回", () => {
     "项目": "Amber",
     "修改文件": "a.mjs\nb.mjs"
   } }] } }));
-  const mapped = mapRemoteRecords(records, AI_TABLE_ID);
+  const mapped = mapRemoteRecords(records, SOURCE_ENV.AMBER_AI_TABLE_ID, "change");
   assert.deepEqual(mapped[0].files, ["a.mjs", "b.mjs"]);
   assert.equal(mapped[0].id, "ai-1");
 });

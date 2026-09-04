@@ -1,15 +1,26 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { getTaskContext } from "../scripts/lib/task-context.mjs";
+import { getTaskContext as loadTaskContext } from "../scripts/lib/task-context.mjs";
 import {
   MAX_CONCURRENT_FETCHES,
   cacheSize,
   clearCache,
   getDataset
 } from "../scripts/lib/task-context/cache.mjs";
-import { AI_TABLE_ID } from "../scripts/lib/task-context/constants.mjs";
 
 const WORKSPACE = "D:/project/Amber";
+const SOURCE_ENV = {
+  AMBER_BASE_TOKEN: "test-base-token",
+  AMBER_AI_TABLE_ID: "tblAiTestFixture01",
+  AMBER_COMMIT_TABLE_ID: "tblCommitTestFix01"
+};
+
+function getTaskContext(input, options = {}) {
+  return loadTaskContext(input, {
+    ...options,
+    env: { ...SOURCE_ENV, ...(options.env || {}) }
+  });
+}
 
 function makeAiRecord({ id = "ai-1", task = "测试任务", files = "scripts/lib/task-context.mjs" }) {
   return { record_id: id, fields: {
@@ -344,7 +355,7 @@ test("compact 指标分别记录 AI 和 commit 数据源耗时", async () => {
     runCommand: async (args) => {
       await new Promise((resolvePromise) => setTimeout(
         resolvePromise,
-        args.includes(AI_TABLE_ID) ? 10 : 40
+        args.includes(SOURCE_ENV.AMBER_AI_TABLE_ID) ? 10 : 40
       ));
       return emptyResponse();
     },

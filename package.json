@@ -1,7 +1,25 @@
 {
-  "name": "amber",
-  "version": "1.4.0-mvp.3",
-  "private": true,
+  "name": "@amber/cli",
+  "version": "1.5.0-beta.0",
+  "private": false,
+  "license": "Apache-2.0",
+  "publishConfig": {
+    "registry": "https://npm-fe.transsion.com/"
+  },
+  "bin": {
+    "amber": "bin/amber.mjs"
+  },
+  "files": [
+    "bin",
+    "scripts",
+    "dashboard",
+    "skills",
+    "templates",
+    "LICENSE",
+    "README.md",
+    "amber.bat",
+    ".env.example"
+  ],
   "type": "module",
   "engines": {
     "node": ">=22"
@@ -40,6 +58,8 @@
     "team:install": "node scripts/team-setup.mjs install",
     "team:doctor": "node scripts/team-setup.mjs doctor",
     "team:uninstall": "node scripts/team-setup.mjs uninstall",
+    "amber": "node bin/amber.mjs",
+    "pack:audit": "node -e \"import('./scripts/lib/pack-audit.mjs').then(async (m) => { const files = m.collectPublishableFiles(process.cwd()); const report = m.auditPackageFiles(files); if (!report.ok) { console.error(JSON.stringify(report, null, 2)); process.exit(1); } console.log(JSON.stringify({ ok: true, files: files.length }, null, 2)); })\"",
     "test": "node --test"
   }
 }

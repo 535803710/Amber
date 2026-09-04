@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "id": "amber-space.v1",
+  "name": "【琥珀计划】AI 记录沉淀 - 模板",
+  "templateUrl": "https://transsioner.feishu.cn/base/JDHxbOPw9aBWrQskKBRcw911nPI",
+  "templateToken": "JDHxbOPw9aBWrQskKBRcw911nPI",
+  "copyName": "Amber 空间",
+  "timeZone": "Asia/Shanghai",
+  "tables": [
+    {
+      "name": "VibeCoding修改记录",
+      "fingerprint": "385e5f70c30685c4",
+      "fields": [
+        { "name": "作者", "type": "text" },
+        { "name": "作者邮箱", "type": "text" },
+        { "name": "修改记录", "type": "text" },
+        { "name": "完成时间", "type": "text" },
+        { "name": "工具", "type": "select" },
+        { "name": "项目", "type": "text" },
+        { "name": "仓库路径", "type": "text" },
+        { "name": "分支", "type": "text" },
+        { "name": "HEAD 提交", "type": "text" },
+        { "name": "用户需求", "type": "text" },
+        { "name": "修改结果", "type": "text" },
+        { "name": "修改文件", "type": "text" },
+        { "name": "文件数", "type": "number" },
+        { "name": "新增行", "type": "number" },
+        { "name": "删除行", "type": "number" },
+        { "name": "结果状态", "type": "select" },
+        { "name": "采集质量", "type": "select" },
+        { "name": "会话 ID", "type": "text" },
+        { "name": "轮次 ID", "type": "text" },
+        { "name": "事件 ID", "type": "text" }
+      ]
+    },
+    {
+      "name": "Git提交记录",
+      "fingerprint": "8e0a7dc4c542ed30",
+      "fields": [
+        { "name": "提交标题", "type": "text" },
+        { "name": "提交说明", "type": "text" },
+        { "name": "项目", "type": "text" },
+        { "name": "仓库路径", "type": "text" },
+        { "name": "分支", "type": "text" },
+        { "name": "修改文件", "type": "text" },
+        { "name": "提交时间", "type": "text" },
+        { "name": "事件ID", "type": "text" },
+        { "name": "提交SHA", "type": "text" },
+        { "name": "关联AI事件ID", "type": "text" },
+        { "name": "作者", "type": "text" },
+        { "name": "远端地址", "type": "url" }
+      ]
+    }
+  ],
+  "workflows": [
+    {
+      "id": "ai",
+      "name": "VibeCoding修改记录修改工作流",
+      "tableName": "VibeCoding修改记录",
+      "workflowPath": ""
+    },
+    {
+      "id": "git",
+      "name": "Git提交工作流",
+      "tableName": "Git提交记录",
+      "workflowPath": ""
+    }
+  ]
+}

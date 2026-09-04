@@ -210,6 +210,16 @@ export async function getTaskContext(input, options = {}) {
 
 // 带数据集缓存 + in-flight 合并 + SWR 的表查询
 async function fetchTable({ tableId, fields, project, sortField, baseToken, recordType, runCommand, now, enableSWR }) {
+  if (!String(baseToken || "").trim() || !String(tableId || "").trim()) {
+    return {
+      records: [],
+      warnings: [],
+      remoteCalls: 0,
+      cacheStatus: "skipped",
+      commandDurationMs: 0,
+      parseDurationMs: 0
+    };
+  }
   const cacheKey = `${tableId}:${project}`;
   const cached = getDataset(cacheKey, now);
 

@@ -93,10 +93,19 @@ test("运行中的记录 worker 自动应用新保存的 Webhook", async (t) => 
     "utf8",
   );
 
-  await waitFor(() =>
-    getChangeRecordStatus({ rootDir: target }).sent === 1 &&
-    getCommitRecordStatus({ rootDir: target }).sent === 1
-  );
+  try {
+    await waitFor(() =>
+      getChangeRecordStatus({ rootDir: target }).sent === 1 &&
+      getCommitRecordStatus({ rootDir: target }).sent === 1
+    );
+  } catch (error) {
+    throw new Error([
+      error.message,
+      `change=${JSON.stringify(getChangeRecordStatus({ rootDir: target }))}`,
+      `commit=${JSON.stringify(getCommitRecordStatus({ rootDir: target }))}`,
+      `workers=${workers.map((worker) => worker.getOutput()).join(" || ")}`
+    ].join(" "));
+  }
 
   assert.equal(getChangeRecordStatus({ rootDir: target }).pending, 0);
   assert.equal(getCommitRecordStatus({ rootDir: target }).pending, 0);

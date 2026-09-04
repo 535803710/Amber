@@ -1,19 +1,21 @@
 #!/usr/bin/env node
 
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  inspectTeamSetup,
+  collectLarkDoctorChecks,
+  collectTeamSetupChecks,
   installTeamSetup,
+  readDesiredProfile,
+  readPackageVersion,
+  redactDiagnosticPaths,
   resolveUninstallSystemPlan,
   uninstallTeamSetup
 } from "./lib/team-setup.mjs";
-import { resolveLarkCliInvocation } from "./lib/task-context/lark-source.mjs";
-import { resolveTaskContextSource } from "./lib/task-context/constants.mjs";
 import { getWatcherStatus } from "./lib/watcher-control.mjs";
 
 const SOURCE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -78,48 +80,28 @@ function uninstall(args) {
 }
 
 function doctor(args, { live }) {
-  const snapshot = inspectTeamSetup({ targetRoot: args.target, userHome: args.userHome });
-  const env = { ...process.env, ...readEnvFile(resolve(args.target, ".env.local")) };
-  const watcher = getWatcherStatus(args.target);
-  const desired = readJsonFile(resolve(args.target, ".local/runtime-desired.json"));
-  const checks = [
-    check("node_runtime", "Node.js", true, `${nodeSource(process.execPath)} · ${process.version}`),
-    check("runtime_files", "运行文件", snapshot.runtime),
-    check("local_config", "本地配置", snapshot.envLocal),
-    check("cursor_hooks", "Cursor Hook", snapshot.cursorHooks),
-    check("cursor_mcp", "Cursor MCP", snapshot.cursorMcp),
-    check("codex_hooks", "Codex Hook", snapshot.codexHooks),
-    check("codex_mcp", "Codex MCP", snapshot.codexMcp),
-    optionalCheck("ai_webhook", "AI 记录 Webhook", Boolean(env.FEISHU_CHANGE_WEBHOOK_URL?.trim())),
-    optionalCheck("git_webhook", "Git 记录 Webhook", Boolean(env.FEISHU_COMMIT_WEBHOOK_URL?.trim())),
-    optionalCheck("git_scan_roots", "Git 扫描目录", Boolean(env.COMMIT_RECORD_SCAN_ROOTS?.trim())),
-    optionalCheck(
-      "autostart",
-      "开机自启动",
-      existsSync(resolve(args.target, ".local/autostart-method.txt")) || args.skipSystem
-    ),
-    optionalCheck(
-      "runtime_processes",
-      "核心常驻进程",
-      watcher.running && watcher.healthRunning,
-      watcher.running && watcher.healthRunning ? "watcher 与 health monitor 正常" : "尚未全部运行"
-    )
-  ];
-  if (live) checks.push(...larkChecks(args.target));
+  const { checks: baseChecks } = collectTeamSetupChecks({
+    targetRoot: args.target,
+    userHome: args.userHome,
+    env: process.env,
+    skipSystem: args.skipSystem,
+    watcher: getWatcherStatus(args.target)
+  });
+  const checks = live ? [...baseChecks, ...collectLarkDoctorChecks(args.target, process.env)] : baseChecks;
   const status = checks.some((item) => item.status === "fail")
     ? "fail"
     : checks.some((item) => item.status === "warn") ? "warn" : "pass";
   const reportChecks = args.json
     ? checks.map((item) => ({
         ...item,
-        detail: redactDiagnosticPaths(item.detail, args)
+        detail: redactDiagnosticPaths(item.detail, { userHome: args.userHome, targetRoot: args.target })
       }))
     : checks;
   const report = {
     schemaVersion: 1,
     version: readPackageVersion(args.target),
     checkedAt: new Date().toISOString(),
-    profile: desired?.profile === "full" ? "full" : "core",
+    profile: readDesiredProfile(args.target),
     status,
     checks: reportChecks
   };
@@ -132,57 +114,6 @@ function doctor(args, { live }) {
     console.log(`[${marker}] ${item.label}${item.detail ? `：${item.detail}` : ""}`);
   }
   return report;
-}
-
-function larkChecks(targetRoot) {
-  const env = { ...process.env, ...readEnvFile(resolve(targetRoot, ".env.local")) };
-  const source = resolveTaskContextSource(env);
-  const auth = runLark(["auth", "status", "--json", "--verify"], env);
-  if (!auth.ok) return [check("lark_auth", "飞书登录", false, auth.message)];
-  const authJson = parseJsonOutput(auth.stdout);
-  const verified = authJson?.verified === true || authJson?.data?.verified === true || authJson?.ok === true;
-  const checks = [check("lark_auth", "飞书登录", verified, verified ? "用户身份有效" : "登录状态未通过验证")];
-  for (const [id, label, tableId] of [
-    ["ai_table", "AI 记录表", source.aiTableId],
-    ["git_table", "Git 记录表", source.commitTableId]
-  ]) {
-    if (!source.baseToken || !tableId) {
-      checks.push(check(id, label, false, "Base 配置缺失"));
-      continue;
-    }
-    const probe = runLark([
-      "base", "+record-list",
-      "--base-token", source.baseToken,
-      "--table-id", tableId,
-      "--limit", "1",
-      "--as", "user",
-      "--format", "json"
-    ], env);
-    checks.push(check(id, label, probe.ok, probe.ok ? "可读取" : probe.message));
-  }
-  return checks;
-}
-
-function runLark(args, env) {
-  let invocation;
-  try {
-    invocation = resolveLarkCliInvocation(args, { env });
-  } catch (error) {
-    return { ok: false, message: sanitize(error?.message || error) };
-  }
-  const result = spawnSync(invocation.command, invocation.args, {
-    encoding: "utf8",
-    env: {
-      ...env,
-      LARKSUITE_CLI_NO_UPDATE_NOTIFIER: "1",
-      LARKSUITE_CLI_NO_SKILLS_NOTIFIER: "1"
-    },
-    windowsHide: true,
-    timeout: 15_000
-  });
-  if (result.error) return { ok: false, message: sanitize(result.error.message) };
-  if (result.status !== 0) return { ok: false, message: sanitize(result.stderr || `退出码 ${result.status}`) };
-  return { ok: true, stdout: result.stdout };
 }
 
 function setUserAmberHome(targetRoot) {
@@ -221,25 +152,6 @@ function openDashboard(targetRoot) {
   child.unref();
 }
 
-function readEnvFile(path) {
-  if (!existsSync(path)) return {};
-  const result = {};
-  for (const line of readFileSync(path, "utf8").split(/\r?\n/)) {
-    const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
-    if (!match) continue;
-    result[match[1]] = match[2].replace(/^(["'])(.*)\1$/, "$2").trim();
-  }
-  return result;
-}
-
-function parseJsonOutput(value) {
-  try {
-    return JSON.parse(String(value || "").trim());
-  } catch {
-    return null;
-  }
-}
-
 function parseArgs(argv) {
   const command = argv[0] || "help";
   const value = (flag, fallback) => {
@@ -264,65 +176,6 @@ function assertWindows() {
 function assertNodeVersion() {
   const major = Number.parseInt(process.versions.node.split(".")[0], 10);
   if (major < 22) throw new Error(`需要 Node.js 22 或更高版本，当前为 ${process.version}。`);
-}
-
-function check(id, label, ok, detail = "") {
-  return { id, label, status: ok ? "pass" : "fail", detail };
-}
-
-function optionalCheck(id, label, ok, detail = "") {
-  return { id, label, status: ok ? "pass" : "warn", detail };
-}
-
-function readJsonFile(path) {
-  try {
-    return JSON.parse(readFileSync(path, "utf8"));
-  } catch {
-    return null;
-  }
-}
-
-function readPackageVersion(targetRoot) {
-  try {
-    return JSON.parse(readFileSync(resolve(targetRoot, "package.json"), "utf8")).version || "unknown";
-  } catch {
-    return "unknown";
-  }
-}
-
-function nodeSource(path) {
-  const normalized = String(path || "").replaceAll("\\", "/").toLowerCase();
-  if (normalized.includes("/.cache/codex-runtimes/")) return "Codex Runtime";
-  if (normalized.includes("/program files/") || normalized.includes("/program files (x86)/")) return "标准安装";
-  if (normalized.includes("/appdata/local/programs/nodejs/")) return "用户安装";
-  return "当前 Node";
-}
-
-function redactDiagnosticPaths(value, args) {
-  let detail = String(value || "");
-  for (const [path, replacement] of [
-    [args.userHome, "<user-home>"],
-    [args.target, "<amber-root>"]
-  ]) {
-    const normalized = String(path || "");
-    if (!normalized) continue;
-    for (const variant of new Set([normalized, normalized.replaceAll("\\", "/")])) {
-      detail = detail.replace(new RegExp(escapeRegExp(variant), "gi"), replacement);
-    }
-  }
-  return detail;
-}
-
-function escapeRegExp(value) {
-  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function sanitize(value) {
-  return String(value || "")
-    .replace(/(?:token|authorization|bearer)\s*[:=]\s*\S+/gi, "[redacted]")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 240);
 }
 
 function printHelp() {

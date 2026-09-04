@@ -199,7 +199,7 @@ Cursor 项目配置：
 
 Codex 在 `config.toml` 里用同一个 stdio 命令配置。当前 Windows `team-setup` 会按安装目录写入 Hook/MCP；部门入口改为 npx 后，仍应复用同一套合并逻辑。
 
-输入必须包含 `workspace_root`（绝对路径）和 `task`，可选 `files`、`limit`、`detail`。共享 Base 可以用 `.env.local` 的 `AMBER_BASE_TOKEN`、`AMBER_AI_TABLE_ID`、`AMBER_COMMIT_TABLE_ID` 覆盖，未配置时继续使用默认双表。
+输入必须包含 `workspace_root`（绝对路径）和 `task`，可选 `files`、`limit`、`detail`。共享 Base 可以用 `.env.local` 的 `AMBER_BASE_TOKEN`、`AMBER_AI_TABLE_ID`、`AMBER_COMMIT_TABLE_ID` 配置。未配置 Base token 与表 ID 时 MCP 不能读飞书，回退本地队列。
 
 历史演变题的自动升级可以在启动前设置 `AMBER_TASK_CONTEXT_ADAPTIVE_HISTORY=0` 紧急关闭，默认 `1`，只影响检索密度。
 
